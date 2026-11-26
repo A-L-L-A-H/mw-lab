@@ -29,6 +29,9 @@ func main() {
 	lfsDir := envOrDefault("MW_LAB_LFS_DIR", filepath.Join(baseDir, "lfs"))
 	publicBaseURL := strings.TrimSpace(os.Getenv("MW_LAB_PUBLIC_URL"))
 	authToken := strings.TrimSpace(os.Getenv("MW_LAB_TOKEN"))
+	ridJWKSURL := strings.TrimSpace(os.Getenv("MW_RID_JWKS_URL"))
+	ridIssuer := strings.TrimSpace(os.Getenv("MW_RID_ISSUER"))
+	ridAudience := strings.TrimSpace(os.Getenv("MW_RID_AUDIENCE"))
 	missionURL := strings.TrimSpace(os.Getenv("MW_MISSION_URL"))
 	echoBaseURL := strings.TrimSpace(os.Getenv("MW_ECHO_URL"))
 	echoToken := strings.TrimSpace(os.Getenv("MW_ECHO_TOKEN"))
@@ -73,10 +76,13 @@ func main() {
 	}
 
 	labServer := server.New(server.Config{
-		Addr:       addr,
-		AuthToken:  authToken,
-		Version:    appVersion,
-		MissionURL: missionURL,
+		Addr:        addr,
+		AuthToken:   authToken,
+		RIDJWKSURL:  ridJWKSURL,
+		RIDIssuer:   ridIssuer,
+		RIDAudience: ridAudience,
+		Version:     appVersion,
+		MissionURL:  missionURL,
 	}, labStore, gitManager, dispatcher, lfsService)
 
 	httpServer := &http.Server{

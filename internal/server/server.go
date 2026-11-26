@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/A-L-L-A-H/mw-lab/internal/auth"
 	"github.com/A-L-L-A-H/mw-lab/internal/ci"
 	"github.com/A-L-L-A-H/mw-lab/internal/githttp"
 	"github.com/A-L-L-A-H/mw-lab/internal/lfs"
@@ -25,6 +26,10 @@ var embeddedDashboardHTML string
 type Config struct {
 	Addr         string
 	AuthToken    string
+	RIDJWKSURL   string
+	RIDIssuer    string
+	RIDAudience  string
+	RIDVerifier  *auth.RIDVerifier
 	Version      string
 	MissionURL   string
 	CIHTTPClient *http.Client
@@ -38,6 +43,7 @@ type Server struct {
 	dispatcher   *githttp.WebhookDispatcher
 	ciDispatcher *ci.Dispatcher
 	lfsService   *lfs.Service
+	ridVerifier  *auth.RIDVerifier
 	cfg          Config
 }
 
@@ -75,6 +81,17 @@ func New(cfg Config, dbStore *store.Store, gitManager *githttp.Manager, dispatch
 	}
 	ciDispatcher := ci.NewDispatcher(missionURL, cfg.CIHTTPClient)
 
+	ridVerifier := cfg.RIDVerifier
+	if ridVerifier == nil && strings.TrimSpace(cfg.RIDJWKSURL) != "" {
+		if createdVerifier, err := auth.NewRIDVerifier(auth.RIDConfig{
+			JWKSURL:  cfg.RIDJWKSURL,
+			Issuer:   cfg.RIDIssuer,
+			Audience: cfg.RIDAudience,
+		}); err == nil {
+			ridVerifier = createdVerifier
+		}
+	}
+
 	gitHandler := githttp.NewHandler(gitManager, dbStore, dispatcher)
 	gitHandler.SetCIDispatcher(ciDispatcher)
 	srv := &Server{
@@ -85,6 +102,7 @@ func New(cfg Config, dbStore *store.Store, gitManager *githttp.Manager, dispatch
 		dispatcher:   dispatcher,
 		ciDispatcher: ciDispatcher,
 		lfsService:   lfsService,
+		ridVerifier:  ridVerifier,
 		cfg:          cfg,
 	}
 	srv.registerRoutes()
@@ -113,7 +131,7 @@ func (s *Server) registerRoutes() {
 	s.echoApp.GET("/health", s.handleHealth)
 
 	api := s.echoApp.Group("/api")
-	if strings.TrimSpace(s.cfg.AuthToken) != "" {
+	if strings.TrimSpace(s.cfg.AuthToken) != "" || s.ridVerifier != nil {
 		api.Use(s.bearerAuthMiddleware(strings.TrimSpace(s.cfg.AuthToken)))
 	}
 
@@ -151,10 +169,23 @@ func (s *Server) bearerAuthMiddleware(expectedToken string) echo.MiddlewareFunc 
 			if provided == authHeader {
 				provided = ""
 			}
-			if subtle.ConstantTimeCompare([]byte(provided), []byte(expectedToken)) != 1 {
+			provided = strings.TrimSpace(provided)
+			if provided == "" {
 				return c.JSON(http.StatusUnauthorized, map[string]string{"error": "unauthorized"})
 			}
-			return next(c)
+			if expectedToken != "" && subtle.ConstantTimeCompare([]byte(provided), []byte(expectedToken)) == 1 {
+				return next(c)
+			}
+			if s.ridVerifier != nil {
+				claims, err := s.ridVerifier.Verify(c.Request().Context(), provided)
+				if err == nil {
+					c.Set("rid_subject", claims.Subject)
+					c.Set("rid_issuer", claims.Issuer)
+					c.Set("rid_scope", claims.Scope)
+					return next(c)
+				}
+			}
+			return c.JSON(http.StatusUnauthorized, map[string]string{"error": "unauthorized"})
 		}
 	}
 }

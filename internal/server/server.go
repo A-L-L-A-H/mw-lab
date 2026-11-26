@@ -6,10 +6,12 @@ import (
 	"errors"
 	"net/http"
 	"net/url"
+	"os"
 	"strconv"
 	"strings"
 	"time"
 
+	"github.com/A-L-L-A-H/mw-lab/internal/ci"
 	"github.com/A-L-L-A-H/mw-lab/internal/githttp"
 	"github.com/A-L-L-A-H/mw-lab/internal/lfs"
 	"github.com/A-L-L-A-H/mw-lab/internal/store"
@@ -21,19 +23,22 @@ import (
 var embeddedDashboardHTML string
 
 type Config struct {
-	Addr      string
-	AuthToken string
-	Version   string
+	Addr         string
+	AuthToken    string
+	Version      string
+	MissionURL   string
+	CIHTTPClient *http.Client
 }
 
 type Server struct {
-	echoApp    *echo.Echo
-	dbStore    *store.Store
-	gitManager *githttp.Manager
-	gitHandler *githttp.Handler
-	dispatcher *githttp.WebhookDispatcher
-	lfsService *lfs.Service
-	cfg        Config
+	echoApp      *echo.Echo
+	dbStore      *store.Store
+	gitManager   *githttp.Manager
+	gitHandler   *githttp.Handler
+	dispatcher   *githttp.WebhookDispatcher
+	ciDispatcher *ci.Dispatcher
+	lfsService   *lfs.Service
+	cfg          Config
 }
 
 type webhookView struct {
@@ -64,18 +69,32 @@ func New(cfg Config, dbStore *store.Store, gitManager *githttp.Manager, dispatch
 		AllowHeaders: []string{echo.HeaderOrigin, echo.HeaderContentType, echo.HeaderAccept, echo.HeaderAuthorization, "X-MW-Lab-Pusher"},
 	}))
 
+	missionURL := strings.TrimSpace(cfg.MissionURL)
+	if missionURL == "" {
+		missionURL = strings.TrimSpace(os.Getenv("MW_MISSION_URL"))
+	}
+	ciDispatcher := ci.NewDispatcher(missionURL, cfg.CIHTTPClient)
+
 	gitHandler := githttp.NewHandler(gitManager, dbStore, dispatcher)
+	gitHandler.SetCIDispatcher(ciDispatcher)
 	srv := &Server{
-		echoApp:    echoApp,
-		dbStore:    dbStore,
-		gitManager: gitManager,
-		gitHandler: gitHandler,
-		dispatcher: dispatcher,
-		lfsService: lfsService,
-		cfg:        cfg,
+		echoApp:      echoApp,
+		dbStore:      dbStore,
+		gitManager:   gitManager,
+		gitHandler:   gitHandler,
+		dispatcher:   dispatcher,
+		ciDispatcher: ciDispatcher,
+		lfsService:   lfsService,
+		cfg:          cfg,
 	}
 	srv.registerRoutes()
 	return srv
+}
+
+func (s *Server) WaitCI() {
+	if s.ciDispatcher != nil {
+		s.ciDispatcher.Wait()
+	}
 }
 
 func (s *Server) Echo() *echo.Echo {
@@ -104,6 +123,7 @@ func (s *Server) registerRoutes() {
 	api.PATCH("/repos/:owner/:name", s.handleUpdateRepo)
 	api.DELETE("/repos/:owner/:name", s.handleDeleteRepo)
 	api.POST("/repos/:owner/:name/mirror", s.handleMirrorRepo)
+	api.POST("/repos/:owner/:name/trigger-ci", s.handleTriggerCI)
 	api.GET("/repos/:owner/:name/branches", s.handleListBranches)
 	api.GET("/repos/:owner/:name/commits", s.handleListCommits)
 	api.GET("/repos/:owner/:name/tree", s.handleListTree)
@@ -386,6 +406,84 @@ func (s *Server) handleMirrorRepo(c echo.Context) error {
 		return c.JSON(http.StatusBadGateway, map[string]string{"error": err.Error()})
 	}
 	return c.JSON(http.StatusOK, outcome)
+}
+
+func (s *Server) handleTriggerCI(c echo.Context) error {
+	owner, repoName, err := parseRepoParams(c)
+	if err != nil {
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": err.Error()})
+	}
+	ctx := c.Request().Context()
+	repoRecord, err := s.dbStore.GetRepo(ctx, owner, repoName)
+	if errors.Is(err, store.ErrNotFound) {
+		return c.JSON(http.StatusNotFound, map[string]string{"error": "repository not found"})
+	}
+	if err != nil {
+		return c.JSON(http.StatusInternalServerError, map[string]string{"error": err.Error()})
+	}
+
+	var body struct {
+		Ref        string `json:"ref"`
+		SHA        string `json:"sha"`
+		Pusher     string `json:"pusher"`
+		MissionURL string `json:"missionUrl"`
+	}
+	_ = c.Bind(&body)
+
+	targetDispatcher := s.ciDispatcher
+	if overrideURL := strings.TrimSpace(body.MissionURL); overrideURL != "" {
+		if err := ci.ValidateMissionURL(overrideURL); err != nil {
+			return c.JSON(http.StatusBadRequest, map[string]string{"error": err.Error()})
+		}
+		targetDispatcher = ci.NewDispatcher(overrideURL, s.cfg.CIHTTPClient)
+	} else if targetDispatcher == nil || !targetDispatcher.Enabled() {
+		if envMissionURL := strings.TrimSpace(os.Getenv("MW_MISSION_URL")); envMissionURL != "" {
+			if err := ci.ValidateMissionURL(envMissionURL); err != nil {
+				return c.JSON(http.StatusBadRequest, map[string]string{"error": err.Error()})
+			}
+			targetDispatcher = ci.NewDispatcher(envMissionURL, s.cfg.CIHTTPClient)
+		}
+	}
+	if targetDispatcher == nil || !targetDispatcher.Enabled() {
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": "missionUrl or MW_MISSION_URL is not configured"})
+	}
+
+	refName := strings.TrimSpace(body.Ref)
+	if refName == "" {
+		defaultBranch := strings.TrimSpace(repoRecord.DefaultBranch)
+		if defaultBranch == "" {
+			defaultBranch = "main"
+		}
+		refName = "refs/heads/" + defaultBranch
+	}
+
+	commitSHA := strings.TrimSpace(body.SHA)
+	if commitSHA == "" {
+		commits, commitErr := s.gitManager.ListCommits(ctx, owner, repoName, refName, 1)
+		if commitErr == nil && len(commits) > 0 {
+			commitSHA = commits[0].SHA
+		}
+	}
+	if commitSHA == "" {
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": "sha is required when repository has no commits"})
+	}
+
+	pusher := strings.TrimSpace(body.Pusher)
+	if pusher == "" {
+		pusher = "manual"
+	}
+
+	dispatchOutcome, err := targetDispatcher.Dispatch(ctx, ci.DispatchInput{
+		Owner:  owner,
+		Repo:   repoName,
+		Ref:    refName,
+		SHA:    commitSHA,
+		Pusher: pusher,
+	})
+	if err != nil {
+		return c.JSON(http.StatusBadGateway, map[string]string{"error": err.Error()})
+	}
+	return c.JSON(http.StatusAccepted, dispatchOutcome)
 }
 
 func (s *Server) handleListBranches(c echo.Context) error {

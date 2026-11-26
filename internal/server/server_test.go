@@ -9,9 +9,12 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"strings"
+	"sync"
 	"testing"
 
+	"github.com/A-L-L-A-H/mw-lab/internal/ci"
 	"github.com/A-L-L-A-H/mw-lab/internal/githttp"
 	"github.com/A-L-L-A-H/mw-lab/internal/lfs"
 	"github.com/A-L-L-A-H/mw-lab/internal/store"
@@ -235,5 +238,154 @@ func TestServerBearerAuthGuard(t *testing.T) {
 	labServer.Handler().ServeHTTP(authRec, authReq)
 	if authRec.Code != http.StatusOK {
 		t.Fatalf("expected 200 with valid bearer token, got %d", authRec.Code)
+	}
+}
+
+func TestTriggerCIAndPushHookDispatch(t *testing.T) {
+	t.Setenv("MW_MISSION_URL", "")
+
+	var mu sync.Mutex
+	var dispatchedMissions []ci.MissionRequest
+	var dispatchedKeys []string
+
+	mockMissionSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/missions" || r.Method != http.MethodPost {
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+		rawBody, err := io.ReadAll(r.Body)
+		if err != nil {
+			w.WriteHeader(http.StatusBadRequest)
+			return
+		}
+		var parsed ci.MissionRequest
+		if err := json.Unmarshal(rawBody, &parsed); err != nil {
+			w.WriteHeader(http.StatusBadRequest)
+			return
+		}
+		mu.Lock()
+		dispatchedMissions = append(dispatchedMissions, parsed)
+		dispatchedKeys = append(dispatchedKeys, r.Header.Get("Idempotency-Key"))
+		mu.Unlock()
+
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusCreated)
+		_, _ = w.Write([]byte(`{"id":"mission-99","status":"queued"}`))
+	}))
+	defer mockMissionSrv.Close()
+
+	tempRoot := t.TempDir()
+	labStore, err := store.Open(filepath.Join(tempRoot, "ci.db"))
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	defer func() { _ = labStore.Close() }()
+
+	gitMgr, err := githttp.NewManager(filepath.Join(tempRoot, "repos"), labStore, true)
+	if err != nil {
+		t.Fatalf("new git manager: %v", err)
+	}
+	localBackend, err := lfs.NewLocalDiskBackend(filepath.Join(tempRoot, "lfs"))
+	if err != nil {
+		t.Fatalf("new lfs backend: %v", err)
+	}
+	lfsSvc, err := lfs.NewService(labStore, localBackend, "", 0)
+	if err != nil {
+		t.Fatalf("new lfs service: %v", err)
+	}
+
+	// 1. Unconfigured server returns 400 on trigger-ci.
+	unconfiguredSrv := New(Config{Version: "test-ci"}, labStore, gitMgr, nil, lfsSvc)
+	createReq := httptest.NewRequest(http.MethodPost, "/api/repos", bytes.NewBufferString(`{"owner":"moonwitness","name":"ci-repo"}`))
+	createReq.Header.Set("Content-Type", "application/json")
+	createRec := httptest.NewRecorder()
+	unconfiguredSrv.Handler().ServeHTTP(createRec, createReq)
+	if createRec.Code != http.StatusCreated {
+		t.Fatalf("expected 201 create repo, got %d", createRec.Code)
+	}
+
+	noURLReq := httptest.NewRequest(http.MethodPost, "/api/repos/moonwitness/ci-repo/trigger-ci", bytes.NewBufferString(`{"sha":"abcdef123456"}`))
+	noURLReq.Header.Set("Content-Type", "application/json")
+	noURLRec := httptest.NewRecorder()
+	unconfiguredSrv.Handler().ServeHTTP(noURLRec, noURLReq)
+	if noURLRec.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400 when no missionUrl / MW_MISSION_URL configured, got %d", noURLRec.Code)
+	}
+
+	// 2. Configured server dispatches on git-receive-pack push AND on POST /api/repos/:owner/:name/trigger-ci.
+	configuredSrv := New(Config{
+		Version:      "test-ci",
+		MissionURL:   mockMissionSrv.URL,
+		CIHTTPClient: mockMissionSrv.Client(),
+	}, labStore, gitMgr, nil, lfsSvc)
+	httpSrv := httptest.NewServer(configuredSrv.Handler())
+	defer httpSrv.Close()
+
+	workDir := filepath.Join(tempRoot, "ci-work")
+	if err := os.MkdirAll(workDir, 0o755); err != nil {
+		t.Fatalf("mkdir workDir: %v", err)
+	}
+	execGit(t, workDir, "init", "-b", "main")
+	if err := os.WriteFile(filepath.Join(workDir, "main.go"), []byte("package main\nfunc main() {}\n"), 0o644); err != nil {
+		t.Fatalf("write main.go: %v", err)
+	}
+	execGit(t, workDir, "add", ".")
+	execGit(t, workDir, "commit", "-m", "initial ci commit")
+	headCmd := exec.Command("git", "rev-parse", "HEAD")
+	headCmd.Dir = workDir
+	headBytes, err := headCmd.Output()
+	if err != nil {
+		t.Fatalf("rev-parse HEAD: %v", err)
+	}
+	headSHA := strings.TrimSpace(string(headBytes))
+
+	execGit(t, workDir, "remote", "add", "origin", httpSrv.URL+"/moonwitness/ci-repo.git")
+	execGit(t, workDir, "push", "-u", "origin", "main")
+	configuredSrv.WaitCI()
+
+	// Manual trigger-ci endpoint returns 202 Accepted with dispatched mission JSON.
+	triggerResp, err := httpSrv.Client().Post(
+		httpSrv.URL+"/api/repos/moonwitness/ci-repo/trigger-ci",
+		"application/json",
+		bytes.NewBufferString(`{"pusher":"release-bot"}`),
+	)
+	if err != nil {
+		t.Fatalf("post trigger-ci: %v", err)
+	}
+	var triggerOutcome ci.DispatchResult
+	_ = json.NewDecoder(triggerResp.Body).Decode(&triggerOutcome)
+	_ = triggerResp.Body.Close()
+
+	if triggerResp.StatusCode != http.StatusAccepted {
+		t.Fatalf("expected 202 Accepted from trigger-ci, got %d", triggerResp.StatusCode)
+	}
+	expectedKey := "ci:moonwitness/ci-repo:" + headSHA
+	if triggerOutcome.Mission.IdempotencyKey != expectedKey {
+		t.Fatalf("expected idempotency_key %q, got %q", expectedKey, triggerOutcome.Mission.IdempotencyKey)
+	}
+	if len(triggerOutcome.Mission.Tasks) != 3 {
+		t.Fatalf("expected 3 DAG stages, got %d", len(triggerOutcome.Mission.Tasks))
+	}
+
+	mu.Lock()
+	missionCount := len(dispatchedMissions)
+	firstMission := dispatchedMissions[0]
+	firstKey := dispatchedKeys[0]
+	mu.Unlock()
+
+	if missionCount != 2 {
+		t.Fatalf("expected 2 mission dispatches (1 push hook + 1 manual trigger), got %d", missionCount)
+	}
+	if firstKey != expectedKey || firstMission.IdempotencyKey != expectedKey {
+		t.Fatalf("unexpected push-hook idempotency key: header=%q body=%q", firstKey, firstMission.IdempotencyKey)
+	}
+	expectedTags := []string{"git", "ci"}
+	if !reflect.DeepEqual(firstMission.CapabilityTags, expectedTags) {
+		t.Fatalf("unexpected capability tags: %v", firstMission.CapabilityTags)
+	}
+	if firstMission.Tasks[0].ID != "lint" || len(firstMission.Tasks[0].DependsOn) != 0 ||
+		firstMission.Tasks[1].ID != "test" || !reflect.DeepEqual(firstMission.Tasks[1].DependsOn, []string{"lint"}) ||
+		firstMission.Tasks[2].ID != "build" || !reflect.DeepEqual(firstMission.Tasks[2].DependsOn, []string{"test"}) {
+		t.Fatalf("unexpected 3-stage DAG: %+v", firstMission.Tasks)
 	}
 }

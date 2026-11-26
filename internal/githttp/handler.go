@@ -14,14 +14,16 @@ import (
 	"strings"
 	"time"
 
+	"github.com/A-L-L-A-H/mw-lab/internal/ci"
 	"github.com/A-L-L-A-H/mw-lab/internal/store"
 	"github.com/labstack/echo/v4"
 )
 
 type Handler struct {
-	manager    *Manager
-	dbStore    *store.Store
-	dispatcher *WebhookDispatcher
+	manager      *Manager
+	dbStore      *store.Store
+	dispatcher   *WebhookDispatcher
+	ciDispatcher *ci.Dispatcher
 }
 
 func NewHandler(manager *Manager, dbStore *store.Store, dispatcher *WebhookDispatcher) *Handler {
@@ -30,6 +32,10 @@ func NewHandler(manager *Manager, dbStore *store.Store, dispatcher *WebhookDispa
 		dbStore:    dbStore,
 		dispatcher: dispatcher,
 	}
+}
+
+func (h *Handler) SetCIDispatcher(ciDispatcher *ci.Dispatcher) {
+	h.ciDispatcher = ciDispatcher
 }
 
 func (h *Handler) RegisterRoutes(echoApp *echo.Echo) {
@@ -198,6 +204,16 @@ func (h *Handler) emitPushEvents(owner, repoName, pusher string, beforeRefs, aft
 				Pusher:    pusher,
 				Commits:   recentCommits,
 				Timestamp: time.Now().UTC().Format(time.RFC3339Nano),
+			})
+		}
+
+		if h.ciDispatcher != nil && h.ciDispatcher.Enabled() && afterSHA != ZeroSHA {
+			h.ciDispatcher.DispatchAsync(ci.DispatchInput{
+				Owner:  owner,
+				Repo:   repoName,
+				Ref:    refName,
+				SHA:    afterSHA,
+				Pusher: pusher,
 			})
 		}
 	}

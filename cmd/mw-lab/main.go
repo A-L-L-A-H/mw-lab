@@ -29,6 +29,7 @@ func main() {
 	lfsDir := envOrDefault("MW_LAB_LFS_DIR", filepath.Join(baseDir, "lfs"))
 	publicBaseURL := strings.TrimSpace(os.Getenv("MW_LAB_PUBLIC_URL"))
 	authToken := strings.TrimSpace(os.Getenv("MW_LAB_TOKEN"))
+	missionURL := strings.TrimSpace(os.Getenv("MW_MISSION_URL"))
 	echoBaseURL := strings.TrimSpace(os.Getenv("MW_ECHO_URL"))
 	echoToken := strings.TrimSpace(os.Getenv("MW_ECHO_TOKEN"))
 	echoProject := envOrDefault("MW_ECHO_PROJECT", "mw-lab")
@@ -72,9 +73,10 @@ func main() {
 	}
 
 	labServer := server.New(server.Config{
-		Addr:      addr,
-		AuthToken: authToken,
-		Version:   appVersion,
+		Addr:       addr,
+		AuthToken:  authToken,
+		Version:    appVersion,
+		MissionURL: missionURL,
 	}, labStore, gitManager, dispatcher, lfsService)
 
 	httpServer := &http.Server{
@@ -99,6 +101,7 @@ func main() {
 		defer cancel()
 		_ = httpServer.Shutdown(shutdownCtx)
 		dispatcher.Wait()
+		labServer.WaitCI()
 	case serveErr := <-errChan:
 		if serveErr != nil && !errors.Is(serveErr, http.ErrServerClosed) {
 			log.Fatalf("http server failed: %v", serveErr)

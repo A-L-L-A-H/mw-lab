@@ -1,0 +1,536 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>MW-LAB // Sovereign Git &amp; Artifact Forge</title>
+  <style>
+    :root {
+      --bg: #09090b;
+      --surface: #121216;
+      --surface-alt: #18181f;
+      --ink: #f4f4f5;
+      --muted: #a1a1aa;
+      --acid: #c6ff00;
+      --amber: #ffb000;
+      --crimson: #ff3b5c;
+      --cyan: #22d3ee;
+      --border: #2e2e38;
+      --shadow: 4px 4px 0 #000000;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      background: var(--bg);
+      color: var(--ink);
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+      line-height: 1.45;
+    }
+    header {
+      border-bottom: 2px solid var(--acid);
+      background: var(--surface);
+      padding: 18px 24px;
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      justify-content: space-between;
+      gap: 16px;
+    }
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+    .sticker {
+      background: var(--acid);
+      color: #09090b;
+      font-weight: 900;
+      padding: 4px 10px;
+      border: 2px solid #000;
+      box-shadow: 3px 3px 0 #000;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      font-size: 12px;
+    }
+    .brand h1 {
+      margin: 0;
+      font-size: 20px;
+      letter-spacing: 0.06em;
+      text-transform: uppercase;
+    }
+    .pill-row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      font-size: 12px;
+    }
+    .pill {
+      padding: 4px 10px;
+      border: 2px solid var(--border);
+      background: var(--surface-alt);
+      color: var(--ink);
+    }
+    .pill strong { color: var(--acid); }
+    main {
+      max-width: 1280px;
+      margin: 0 auto;
+      padding: 24px;
+      display: grid;
+      grid-template-columns: 1.15fr 1fr;
+      gap: 20px;
+    }
+    @media (max-width: 960px) {
+      main { grid-template-columns: 1fr; }
+    }
+    .card {
+      background: var(--surface);
+      border: 2px solid var(--border);
+      box-shadow: var(--shadow);
+      padding: 18px;
+    }
+    .card-head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      border-bottom: 2px solid var(--border);
+      padding-bottom: 10px;
+      margin-bottom: 14px;
+      gap: 12px;
+    }
+    .card-head h2 {
+      margin: 0;
+      font-size: 14px;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      color: var(--acid);
+    }
+    .grid-form {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 10px;
+      margin-bottom: 14px;
+    }
+    .grid-form .full { grid-column: 1 / -1; }
+    input, button {
+      font-family: inherit;
+      font-size: 12px;
+    }
+    input {
+      background: var(--bg);
+      color: var(--ink);
+      border: 2px solid var(--border);
+      padding: 8px 10px;
+      width: 100%;
+    }
+    input:focus {
+      outline: none;
+      border-color: var(--acid);
+    }
+    button {
+      background: var(--acid);
+      color: #09090b;
+      border: 2px solid #000;
+      box-shadow: 2px 2px 0 #000;
+      padding: 8px 14px;
+      font-weight: 800;
+      text-transform: uppercase;
+      cursor: pointer;
+      letter-spacing: 0.05em;
+    }
+    button.secondary {
+      background: var(--surface-alt);
+      color: var(--ink);
+      border-color: var(--border);
+    }
+    button.danger {
+      background: var(--crimson);
+      color: #fff;
+    }
+    button:active { transform: translate(1px, 1px); box-shadow: 1px 1px 0 #000; }
+    .list {
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+    .row {
+      border: 2px solid var(--border);
+      background: var(--surface-alt);
+      padding: 12px;
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+    .row-top {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+    .repo-title {
+      color: var(--cyan);
+      font-weight: 800;
+      font-size: 14px;
+      cursor: pointer;
+      text-decoration: underline;
+    }
+    .muted { color: var(--muted); font-size: 12px; }
+    .badge {
+      font-size: 11px;
+      padding: 2px 6px;
+      border: 1px solid var(--amber);
+      color: var(--amber);
+      text-transform: uppercase;
+    }
+    .code-line {
+      background: var(--bg);
+      border: 1px solid var(--border);
+      padding: 6px 8px;
+      font-size: 11px;
+      overflow-x: auto;
+      color: var(--acid);
+    }
+    .actions {
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+    .toast {
+      position: fixed;
+      bottom: 18px;
+      right: 18px;
+      background: var(--acid);
+      color: #09090b;
+      border: 2px solid #000;
+      box-shadow: 4px 4px 0 #000;
+      padding: 10px 14px;
+      font-size: 12px;
+      font-weight: 800;
+      display: none;
+    }
+    .empty {
+      color: var(--muted);
+      font-size: 12px;
+      border: 1px dashed var(--border);
+      padding: 12px;
+      text-align: center;
+    }
+    pre.blob-view {
+      background: var(--bg);
+      border: 2px solid var(--border);
+      padding: 10px;
+      overflow: auto;
+      max-height: 260px;
+      font-size: 11px;
+      margin: 8px 0 0 0;
+      white-space: pre-wrap;
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <div class="brand">
+      <span class="sticker">RIOT // SOVEREIGN</span>
+      <h1>MW-LAB GIT &amp; LFS FORGE</h1>
+    </div>
+    <div class="pill-row">
+      <span class="pill">LFS BACKEND: <strong id="stat-backend">...</strong></span>
+      <span class="pill">REPOS: <strong id="stat-repos">0</strong></span>
+      <span class="pill">LFS OBJS: <strong id="stat-lfs">0</strong></span>
+      <span class="pill">WEBHOOKS: <strong id="stat-hooks">0</strong></span>
+      <span class="pill">PUSHES: <strong id="stat-pushes">0</strong></span>
+    </div>
+  </header>
+
+  <main>
+    <section class="card">
+      <div class="card-head">
+        <h2>Repositories</h2>
+        <button class="secondary" type="button" onclick="refreshAll()">Refresh</button>
+      </div>
+      <form class="grid-form" onsubmit="createRepo(event)">
+        <input id="repo-owner" placeholder="owner (e.g. moonwitness)" required>
+        <input id="repo-name" placeholder="repo name (e.g. core)" required>
+        <input id="repo-desc" class="full" placeholder="description">
+        <input id="repo-mirror" class="full" placeholder="optional upstream mirror URL (https://github.com/...)">
+        <button class="full" type="submit">+ Initialize Sovereign Repo</button>
+      </form>
+      <div id="repos-list" class="list"></div>
+    </section>
+
+    <section class="card">
+      <div class="card-head">
+        <h2 id="inspector-title">Repository Inspector</h2>
+        <span class="badge" id="inspector-ref">HEAD</span>
+      </div>
+      <div id="inspector-body" class="empty">Select a repository to inspect tree, commits, and clone URLs.</div>
+    </section>
+
+    <section class="card">
+      <div class="card-head">
+        <h2>Push Webhooks (mw-echo / mw-mission)</h2>
+      </div>
+      <form class="grid-form" onsubmit="createWebhook(event)">
+        <input id="hook-owner" placeholder="owner (* for all)" value="*">
+        <input id="hook-repo" placeholder="repo (* for all)" value="*">
+        <input id="hook-url" class="full" placeholder="http://127.0.0.1:8080/api/webhooks/git" required>
+        <input id="hook-secret" class="full" placeholder="optional HMAC-SHA256 secret">
+        <button class="full" type="submit">+ Register Push Webhook</button>
+      </form>
+      <div id="hooks-list" class="list"></div>
+    </section>
+
+    <section class="card">
+      <div class="card-head">
+        <h2>Recent Push Events &amp; LFS Objects</h2>
+      </div>
+      <div id="events-list" class="list"></div>
+      <div style="height:12px"></div>
+      <div id="lfs-list" class="list"></div>
+    </section>
+  </main>
+
+  <div id="toast" class="toast"></div>
+
+  <script>
+    const originBase = window.location.origin;
+
+    function notify(message) {
+      const toastEl = document.getElementById("toast");
+      toastEl.textContent = message;
+      toastEl.style.display = "block";
+      clearTimeout(window._toastTimer);
+      window._toastTimer = setTimeout(() => { toastEl.style.display = "none"; }, 2600);
+    }
+
+    function escapeHTML(rawText) {
+      return String(rawText || "")
+        .replaceAll("&", "&amp;")
+        .replaceAll("<", "&lt;")
+        .replaceAll(">", "&gt;")
+        .replaceAll('"', "&quot;");
+    }
+
+    async function fetchJSON(endpoint, options) {
+      const reply = await fetch(endpoint, options);
+      const payload = await reply.json().catch(() => ({}));
+      if (!reply.ok) {
+        throw new Error(payload.error || payload.message || ("HTTP " + reply.status));
+      }
+      return payload;
+    }
+
+    async function refreshAll() {
+      try {
+        const [healthInfo, repoReply, hookReply, eventReply, lfsReply] = await Promise.all([
+          fetchJSON("/health"),
+          fetchJSON("/api/repos"),
+          fetchJSON("/api/webhooks"),
+          fetchJSON("/api/events?limit=10"),
+          fetchJSON("/api/lfs/objects?limit=10"),
+        ]);
+
+        document.getElementById("stat-backend").textContent = healthInfo.lfsBackend || "local";
+        document.getElementById("stat-repos").textContent = healthInfo.metrics.repoCount;
+        document.getElementById("stat-lfs").textContent = healthInfo.metrics.lfsObjectCount;
+        document.getElementById("stat-hooks").textContent = healthInfo.metrics.webhookCount;
+        document.getElementById("stat-pushes").textContent = healthInfo.metrics.pushEventCount;
+
+        renderRepos(repoReply.repos || []);
+        renderHooks(hookReply.webhooks || []);
+        renderEvents(eventReply.events || []);
+        renderLFS(lfsReply.objects || []);
+      } catch (err) {
+        notify("ERR: " + err.message);
+      }
+    }
+
+    function renderRepos(repos) {
+      const container = document.getElementById("repos-list");
+      if (!repos.length) {
+        container.innerHTML = '<div class="empty">No repositories yet. Initialize one above.</div>';
+        return;
+      }
+      container.innerHTML = repos.map((repo) => {
+        const cloneURL = originBase + "/" + encodeURIComponent(repo.owner) + "/" + encodeURIComponent(repo.name) + ".git";
+        const mirrorButton = repo.mirrorUrl
+          ? `<button class="secondary" type="button" onclick="syncMirror('${escapeHTML(repo.owner)}','${escapeHTML(repo.name)}')">Sync Mirror</button>`
+          : "";
+        return `
+          <div class="row">
+            <div class="row-top">
+              <span class="repo-title" onclick="inspectRepo('${escapeHTML(repo.owner)}','${escapeHTML(repo.name)}')">${escapeHTML(repo.owner)}/${escapeHTML(repo.name)}</span>
+              <span class="badge">${escapeHTML(repo.defaultBranch || "main")}</span>
+            </div>
+            <div class="muted">${escapeHTML(repo.description || "Sovereign bare Git repository")}</div>
+            <div class="code-line">git clone ${escapeHTML(cloneURL)}</div>
+            <div class="actions">
+              <button class="secondary" type="button" onclick="inspectRepo('${escapeHTML(repo.owner)}','${escapeHTML(repo.name)}')">Inspect</button>
+              ${mirrorButton}
+              <button class="danger" type="button" onclick="deleteRepo('${escapeHTML(repo.owner)}','${escapeHTML(repo.name)}')">Delete</button>
+            </div>
+          </div>`;
+      }).join("");
+    }
+
+    function renderHooks(hooks) {
+      const container = document.getElementById("hooks-list");
+      if (!hooks.length) {
+        container.innerHTML = '<div class="empty">No push webhooks registered.</div>';
+        return;
+      }
+      container.innerHTML = hooks.map((hook) => `
+        <div class="row">
+          <div class="row-top">
+            <strong>${escapeHTML(hook.repoOwner)}/${escapeHTML(hook.repoName)}</strong>
+            <span class="badge">${escapeHTML(hook.events)}</span>
+          </div>
+          <div class="code-line">${escapeHTML(hook.targetUrl)}</div>
+          <div class="actions">
+            <button class="danger" type="button" onclick="deleteHook(${hook.id})">Remove</button>
+          </div>
+        </div>`).join("");
+    }
+
+    function renderEvents(events) {
+      const container = document.getElementById("events-list");
+      if (!events.length) {
+        container.innerHTML = '<div class="empty">No push events recorded yet.</div>';
+        return;
+      }
+      container.innerHTML = events.map((ev) => `
+        <div class="row">
+          <div class="row-top">
+            <strong>${escapeHTML(ev.repoOwner)}/${escapeHTML(ev.repoName)}</strong>
+            <span class="badge">${escapeHTML(ev.deliveryStatus)}</span>
+          </div>
+          <div class="muted">${escapeHTML(ev.refName)} // ${escapeHTML(ev.afterSha.slice(0, 10))} by ${escapeHTML(ev.pusher)}</div>
+        </div>`).join("");
+    }
+
+    function renderLFS(objects) {
+      const container = document.getElementById("lfs-list");
+      if (!objects.length) {
+        container.innerHTML = '<div class="empty">No Git LFS artifacts stored yet.</div>';
+        return;
+      }
+      container.innerHTML = objects.map((obj) => `
+        <div class="row">
+          <div class="row-top">
+            <strong>LFS ${escapeHTML(obj.oid.slice(0, 16))}...</strong>
+            <span class="badge">${escapeHTML(obj.backend)}</span>
+          </div>
+          <div class="muted">${escapeHTML(obj.repoOwner)}/${escapeHTML(obj.repoName)} // ${obj.size} bytes</div>
+        </div>`).join("");
+    }
+
+    async function createRepo(event) {
+      event.preventDefault();
+      try {
+        await fetchJSON("/api/repos", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            owner: document.getElementById("repo-owner").value.trim(),
+            name: document.getElementById("repo-name").value.trim(),
+            description: document.getElementById("repo-desc").value.trim(),
+            mirrorUrl: document.getElementById("repo-mirror").value.trim(),
+          }),
+        });
+        document.getElementById("repo-name").value = "";
+        document.getElementById("repo-desc").value = "";
+        document.getElementById("repo-mirror").value = "";
+        notify("Repository initialized");
+        refreshAll();
+      } catch (err) {
+        notify("ERR: " + err.message);
+      }
+    }
+
+    async function deleteRepo(owner, name) {
+      try {
+        await fetchJSON(`/api/repos/${encodeURIComponent(owner)}/${encodeURIComponent(name)}`, { method: "DELETE" });
+        notify(`Deleted ${owner}/${name}`);
+        refreshAll();
+      } catch (err) {
+        notify("ERR: " + err.message);
+      }
+    }
+
+    async function syncMirror(owner, name) {
+      try {
+        const outcome = await fetchJSON(`/api/repos/${encodeURIComponent(owner)}/${encodeURIComponent(name)}/mirror`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: "{}",
+        });
+        notify(`Mirrored ${outcome.branchCount} branch(es)`);
+        refreshAll();
+      } catch (err) {
+        notify("MIRROR ERR: " + err.message);
+      }
+    }
+
+    async function inspectRepo(owner, name) {
+      document.getElementById("inspector-title").textContent = `${owner}/${name}`;
+      try {
+        const [commitReply, treeReply] = await Promise.all([
+          fetchJSON(`/api/repos/${encodeURIComponent(owner)}/${encodeURIComponent(name)}/commits?limit=8`),
+          fetchJSON(`/api/repos/${encodeURIComponent(owner)}/${encodeURIComponent(name)}/tree`),
+        ]);
+        const commitsHTML = (commitReply.commits || []).length
+          ? commitReply.commits.map((cm) => `<div class="row"><strong>${escapeHTML(cm.shortSha)}</strong> ${escapeHTML(cm.subject)}<div class="muted">${escapeHTML(cm.authorName)} // ${escapeHTML(cm.authoredAt)}</div></div>`).join("")
+          : '<div class="empty">Empty repository (0 commits). Push via Smart HTTP to populate.</div>';
+        const treeHTML = (treeReply.entries || []).length
+          ? treeReply.entries.map((entry) => `<div class="row-top"><span>[${escapeHTML(entry.type)}] ${escapeHTML(entry.path)}</span><span class="muted">${entry.size} B</span></div>`).join("")
+          : '<div class="muted">No tree entries yet.</div>';
+        document.getElementById("inspector-body").innerHTML = `
+          <div class="list">
+            <div class="muted">TREE</div>
+            <div class="row">${treeHTML}</div>
+            <div class="muted">COMMITS</div>
+            ${commitsHTML}
+          </div>`;
+      } catch (err) {
+        notify("INSPECT ERR: " + err.message);
+      }
+    }
+
+    async function createWebhook(event) {
+      event.preventDefault();
+      try {
+        await fetchJSON("/api/webhooks", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            repoOwner: document.getElementById("hook-owner").value.trim() || "*",
+            repoName: document.getElementById("hook-repo").value.trim() || "*",
+            targetUrl: document.getElementById("hook-url").value.trim(),
+            secret: document.getElementById("hook-secret").value,
+            events: "push",
+            active: true,
+          }),
+        });
+        document.getElementById("hook-url").value = "";
+        document.getElementById("hook-secret").value = "";
+        notify("Webhook registered");
+        refreshAll();
+      } catch (err) {
+        notify("ERR: " + err.message);
+      }
+    }
+
+    async function deleteHook(hookID) {
+      try {
+        await fetchJSON(`/api/webhooks/${hookID}`, { method: "DELETE" });
+        notify("Webhook removed");
+        refreshAll();
+      } catch (err) {
+        notify("ERR: " + err.message);
+      }
+    }
+
+    refreshAll();
+  </script>
+</body>
+</html>

@@ -1,6 +1,6 @@
 # Binaries
-mw-lab
-mw-lab.exe
+/mw-lab
+/mw-lab.exe
 *.exe
 *.exe~
 *.dll

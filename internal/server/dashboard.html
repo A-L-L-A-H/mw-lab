@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
-  <title>MW-LAB // Sovereign Git &amp; Artifact Forge</title>
+  <title>MW-LAB // Plans &amp; Sovereign Forge</title>
   <style>
     :root {
       --bg: #09090b;
@@ -36,11 +36,7 @@
       justify-content: space-between;
       gap: 16px;
     }
-    .brand {
-      display: flex;
-      align-items: center;
-      gap: 12px;
-    }
+    .brand { display: flex; align-items: center; gap: 12px; }
     .sticker {
       background: var(--acid);
       color: #09090b;
@@ -52,197 +48,108 @@
       text-transform: uppercase;
       font-size: 12px;
     }
-    .brand h1 {
-      margin: 0;
-      font-size: 20px;
-      letter-spacing: 0.06em;
-      text-transform: uppercase;
-    }
-    .pill-row {
-      display: flex;
-      flex-wrap: wrap;
-      gap: 8px;
-      font-size: 12px;
-    }
-    .pill {
-      padding: 4px 10px;
-      border: 2px solid var(--border);
-      background: var(--surface-alt);
-      color: var(--ink);
-    }
+    .brand h1 { margin: 0; font-size: 20px; letter-spacing: 0.06em; text-transform: uppercase; }
+    .pill-row { display: flex; flex-wrap: wrap; gap: 8px; font-size: 12px; }
+    .pill { padding: 4px 10px; border: 2px solid var(--border); background: var(--surface-alt); color: var(--ink); }
     .pill strong { color: var(--acid); }
-    main {
-      max-width: 1280px;
-      margin: 0 auto;
-      padding: 24px;
-      display: grid;
-      grid-template-columns: 1.15fr 1fr;
-      gap: 20px;
-    }
-    @media (max-width: 960px) {
-      main { grid-template-columns: 1fr; }
-    }
-    .card {
-      background: var(--surface);
-      border: 2px solid var(--border);
-      box-shadow: var(--shadow);
-      padding: 18px;
-    }
-    .card-head {
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      border-bottom: 2px solid var(--border);
-      padding-bottom: 10px;
-      margin-bottom: 14px;
-      gap: 12px;
-    }
-    .card-head h2 {
-      margin: 0;
-      font-size: 14px;
-      text-transform: uppercase;
-      letter-spacing: 0.08em;
-      color: var(--acid);
-    }
-    .grid-form {
-      display: grid;
-      grid-template-columns: 1fr 1fr;
-      gap: 10px;
-      margin-bottom: 14px;
-    }
-    .grid-form .full { grid-column: 1 / -1; }
-    input, button {
-      font-family: inherit;
-      font-size: 12px;
-    }
-    input {
-      background: var(--bg);
-      color: var(--ink);
-      border: 2px solid var(--border);
-      padding: 8px 10px;
-      width: 100%;
-    }
-    input:focus {
-      outline: none;
-      border-color: var(--acid);
-    }
-    button {
-      background: var(--acid);
-      color: #09090b;
-      border: 2px solid #000;
-      box-shadow: 2px 2px 0 #000;
-      padding: 8px 14px;
-      font-weight: 800;
-      text-transform: uppercase;
-      cursor: pointer;
-      letter-spacing: 0.05em;
-    }
-    button.secondary {
+    .tab-bar { display: flex; gap: 10px; padding: 12px 24px 0; background: var(--bg); }
+    .tab-btn {
       background: var(--surface-alt);
-      color: var(--ink);
-      border-color: var(--border);
-    }
-    button.danger {
-      background: var(--crimson);
-      color: #fff;
-    }
-    button:active { transform: translate(1px, 1px); box-shadow: 1px 1px 0 #000; }
-    .list {
-      display: flex;
-      flex-direction: column;
-      gap: 10px;
-    }
-    .row {
-      border: 2px solid var(--border);
-      background: var(--surface-alt);
-      padding: 12px;
-      display: flex;
-      flex-direction: column;
-      gap: 6px;
-    }
-    .row-top {
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      gap: 8px;
-      flex-wrap: wrap;
-    }
-    .repo-title {
-      color: var(--cyan);
-      font-weight: 800;
-      font-size: 14px;
-      cursor: pointer;
-      text-decoration: underline;
-    }
-    .muted { color: var(--muted); font-size: 12px; }
-    .badge {
-      font-size: 11px;
-      padding: 2px 6px;
-      border: 1px solid var(--amber);
-      color: var(--amber);
-      text-transform: uppercase;
-    }
-    .code-line {
-      background: var(--bg);
-      border: 1px solid var(--border);
-      padding: 6px 8px;
-      font-size: 11px;
-      overflow-x: auto;
-      color: var(--acid);
-    }
-    .actions {
-      display: flex;
-      gap: 8px;
-      flex-wrap: wrap;
-    }
-    .toast {
-      position: fixed;
-      bottom: 18px;
-      right: 18px;
-      background: var(--acid);
-      color: #09090b;
-      border: 2px solid #000;
-      box-shadow: 4px 4px 0 #000;
-      padding: 10px 14px;
-      font-size: 12px;
-      font-weight: 800;
-      display: none;
-    }
-    .empty {
       color: var(--muted);
-      font-size: 12px;
-      border: 1px dashed var(--border);
-      padding: 12px;
-      text-align: center;
-    }
-    pre.blob-view {
-      background: var(--bg);
       border: 2px solid var(--border);
-      padding: 10px;
-      overflow: auto;
-      max-height: 260px;
-      font-size: 11px;
-      margin: 8px 0 0 0;
-      white-space: pre-wrap;
+      border-bottom: none;
+      padding: 8px 18px;
+      cursor: pointer;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      font-weight: 800;
     }
+    .tab-btn.active { background: var(--acid); color: #09090b; border-color: var(--acid); }
+    main { max-width: 1280px; margin: 0 auto; padding: 24px; display: grid; grid-template-columns: 1.15fr 1fr; gap: 20px; }
+    main.plans { grid-template-columns: 1fr 1fr; }
+    @media (max-width: 960px) { main, main.plans { grid-template-columns: 1fr; } }
+    .hidden { display: none !important; }
+    .card { background: var(--surface); border: 2px solid var(--border); box-shadow: var(--shadow); padding: 18px; }
+    .card-head {
+      display: flex; align-items: center; justify-content: space-between;
+      border-bottom: 2px solid var(--border); padding-bottom: 10px; margin-bottom: 14px; gap: 12px;
+    }
+    .card-head h2 { margin: 0; font-size: 14px; text-transform: uppercase; letter-spacing: 0.08em; color: var(--acid); }
+    .grid-form { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 14px; }
+    .grid-form .full { grid-column: 1 / -1; }
+    input, button { font-family: inherit; font-size: 12px; }
+    input { background: var(--bg); color: var(--ink); border: 2px solid var(--border); padding: 8px 10px; width: 100%; }
+    input:focus { outline: none; border-color: var(--acid); }
+    button {
+      background: var(--acid); color: #09090b; border: 2px solid #000;
+      box-shadow: 2px 2px 0 #000; padding: 8px 14px; font-weight: 800;
+      text-transform: uppercase; cursor: pointer; letter-spacing: 0.05em;
+    }
+    button.secondary { background: var(--surface-alt); color: var(--ink); border-color: var(--border); }
+    button.danger { background: var(--crimson); color: #fff; }
+    button:active { transform: translate(1px, 1px); box-shadow: 1px 1px 0 #000; }
+    .list { display: flex; flex-direction: column; gap: 10px; }
+    .row { border: 2px solid var(--border); background: var(--surface-alt); padding: 12px; display: flex; flex-direction: column; gap: 6px; }
+    .row-top { display: flex; align-items: center; justify-content: space-between; gap: 8px; flex-wrap: wrap; }
+    .repo-title, .plan-title { color: var(--cyan); font-weight: 800; font-size: 14px; cursor: pointer; text-decoration: underline; }
+    .muted { color: var(--muted); font-size: 12px; }
+    .badge { font-size: 11px; padding: 2px 6px; border: 1px solid var(--amber); color: var(--amber); text-transform: uppercase; }
+    .code-line { background: var(--bg); border: 1px solid var(--border); padding: 6px 8px; font-size: 11px; overflow-x: auto; color: var(--acid); }
+    .actions { display: flex; gap: 8px; flex-wrap: wrap; }
+    .toast {
+      position: fixed; bottom: 18px; right: 18px; background: var(--acid); color: #09090b;
+      border: 2px solid #000; box-shadow: 4px 4px 0 #000; padding: 10px 14px;
+      font-size: 12px; font-weight: 800; display: none;
+    }
+    .empty { color: var(--muted); font-size: 12px; border: 1px dashed var(--border); padding: 12px; text-align: center; }
+    pre.blob-view {
+      background: var(--bg); border: 2px solid var(--border); padding: 10px; overflow: auto;
+      max-height: 260px; font-size: 11px; margin: 8px 0 0 0; white-space: pre-wrap;
+    }
+    .progress-track { background: var(--bg); border: 1px solid var(--border); height: 10px; width: 100%; margin-top: 6px; }
+    .progress-fill { background: var(--acid); height: 100%; }
+    .task-done { color: var(--acid); }
+    .task-pending { color: var(--muted); }
+    .task-list { max-height: 420px; overflow-y: auto; display: flex; flex-direction: column; gap: 8px; }
   </style>
 </head>
 <body>
   <header>
     <div class="brand">
       <span class="sticker">RIOT // SOVEREIGN</span>
-      <h1>MW-LAB GIT &amp; LFS FORGE</h1>
+      <h1>MW-LAB GIT &amp; PLANS FORGE</h1>
     </div>
     <div class="pill-row">
+      <span class="pill">PLAN READER: <strong>ACTIVE</strong></span>
+      <span class="pill">PLAN DIR: <strong id="plan-dir-val">...</strong></span>
       <span class="pill">LFS BACKEND: <strong id="stat-backend">...</strong></span>
       <span class="pill">REPOS: <strong id="stat-repos">0</strong></span>
-      <span class="pill">LFS OBJS: <strong id="stat-lfs">0</strong></span>
-      <span class="pill">WEBHOOKS: <strong id="stat-hooks">0</strong></span>
-      <span class="pill">PUSHES: <strong id="stat-pushes">0</strong></span>
     </div>
   </header>
 
-  <main>
+  <div class="tab-bar">
+    <button class="tab-btn active" type="button" id="tab-plans" onclick="switchTab('plans')">Plans</button>
+    <button class="tab-btn" type="button" id="tab-forge" onclick="switchTab('forge')">Forge</button>
+  </div>
+
+  <main class="plans" id="panel-plans">
+    <section class="card">
+      <div class="card-head">
+        <h2>Discovered Plans</h2>
+        <button class="secondary" type="button" onclick="refreshPlans()">Refresh</button>
+      </div>
+      <div id="plans-list" class="list"></div>
+    </section>
+    <section class="card">
+      <div class="card-head">
+        <h2 id="plan-detail-title">Plan Detail</h2>
+        <span class="badge" id="plan-detail-source">—</span>
+      </div>
+      <div id="plan-detail-body" class="empty">Select a plan to inspect waves and micro-tasks.</div>
+    </section>
+  </main>
+
+  <main class="hidden" id="panel-forge">
     <section class="card">
       <div class="card-head">
         <h2>Repositories</h2>
@@ -267,9 +174,7 @@
     </section>
 
     <section class="card">
-      <div class="card-head">
-        <h2>Push Webhooks (mw-echo / mw-mission)</h2>
-      </div>
+      <div class="card-head"><h2>Push Webhooks (mw-echo / mw-mission)</h2></div>
       <form class="grid-form" onsubmit="createWebhook(event)">
         <input id="hook-owner" placeholder="owner (* for all)" value="*">
         <input id="hook-repo" placeholder="repo (* for all)" value="*">
@@ -281,9 +186,7 @@
     </section>
 
     <section class="card">
-      <div class="card-head">
-        <h2>Recent Push Events &amp; LFS Objects</h2>
-      </div>
+      <div class="card-head"><h2>Recent Push Events &amp; LFS Objects</h2></div>
       <div id="events-list" class="list"></div>
       <div style="height:12px"></div>
       <div id="lfs-list" class="list"></div>
@@ -294,6 +197,9 @@
 
   <script>
     const originBase = window.location.origin;
+    let activeTab = "plans";
+    let selectedPlanId = "";
+    let plansTimer = null;
 
     function notify(message) {
       const toastEl = document.getElementById("toast");
@@ -320,6 +226,85 @@
       return payload;
     }
 
+    function switchTab(name) {
+      activeTab = name;
+      document.getElementById("panel-plans").classList.toggle("hidden", name !== "plans");
+      document.getElementById("panel-forge").classList.toggle("hidden", name !== "forge");
+      document.getElementById("tab-plans").classList.toggle("active", name === "plans");
+      document.getElementById("tab-forge").classList.toggle("active", name === "forge");
+      if (name === "plans") {
+        refreshPlans();
+        if (!plansTimer) plansTimer = setInterval(refreshPlans, 30000);
+      } else if (plansTimer) {
+        clearInterval(plansTimer);
+        plansTimer = null;
+      }
+      if (name === "forge") refreshAll();
+    }
+
+    async function refreshPlans() {
+      try {
+        const reply = await fetchJSON("/api/plans");
+        document.getElementById("plan-dir-val").textContent = reply.planDir || "unset";
+        const plans = reply.plans || [];
+        const container = document.getElementById("plans-list");
+        if (!plans.length) {
+          container.innerHTML = '<div class="empty">No .plan bundles discovered. Set MW_LAB_PLAN_DIR to a workspace .plan directory.</div>';
+          return;
+        }
+        container.innerHTML = plans.map((plan) => `
+          <div class="row">
+            <div class="row-top">
+              <span class="plan-title" onclick="openPlan('${escapeHTML(plan.id)}')">${escapeHTML(plan.id)}</span>
+              <span class="badge">${escapeHTML(plan.targetBranch || "main")}</span>
+            </div>
+            <div class="muted">${escapeHTML(plan.title)}</div>
+            <div class="muted">${plan.doneTasks}/${plan.totalTasks} tasks · ${plan.waveCount} waves · ${escapeHTML(plan.sourceFile)}</div>
+            <div class="progress-track"><div class="progress-fill" style="width:${plan.progressPct}%"></div></div>
+          </div>`).join("");
+        if (selectedPlanId && plans.some((p) => p.id === selectedPlanId)) {
+          await openPlan(selectedPlanId);
+        }
+      } catch (err) {
+        notify("PLAN ERR: " + err.message);
+      }
+    }
+
+    async function openPlan(id) {
+      selectedPlanId = id;
+      try {
+        const reply = await fetchJSON("/api/plans/" + encodeURIComponent(id));
+        const plan = reply.plan;
+        document.getElementById("plan-detail-title").textContent = plan.title;
+        document.getElementById("plan-detail-source").textContent = plan.sourceFile;
+        const waveHTML = (plan.waves || []).map((wave) => `
+          <div class="row-top">
+            <strong>${escapeHTML(wave.id)}</strong>
+            <span class="muted">${wave.doneCount}/${wave.taskCount} done · depends: ${escapeHTML((wave.dependsOn || []).join(", ") || "none")}</span>
+          </div>`).join("");
+        const taskHTML = (plan.tasks || []).map((task) => `
+          <div class="row">
+            <div class="row-top">
+              <strong class="${task.status === "done" ? "task-done" : "task-pending"}">${task.status === "done" ? "[x]" : "[ ]"} ${escapeHTML(task.code)}</strong>
+              <span class="badge">${escapeHTML(task.waveId || "—")}</span>
+            </div>
+            <div class="muted">${escapeHTML(task.title)}</div>
+            ${(task.ownerFiles || []).length ? '<div class="code-line">' + escapeHTML(task.ownerFiles.join(", ")) + '</div>' : ""}
+          </div>`).join("");
+        document.getElementById("plan-detail-body").innerHTML = `
+          <div class="list">
+            <div class="muted">PROGRESS: ${plan.doneTasks}/${plan.totalTasks} (${plan.progressPct}%)</div>
+            <div class="progress-track"><div class="progress-fill" style="width:${plan.progressPct}%"></div></div>
+            <div class="muted">WAVES</div>
+            <div class="row">${waveHTML || '<div class="empty">No waves parsed.</div>'}</div>
+            <div class="muted">MICRO-TASKS</div>
+            <div class="task-list">${taskHTML || '<div class="empty">No tasks parsed.</div>'}</div>
+          </div>`;
+      } catch (err) {
+        notify("PLAN ERR: " + err.message);
+      }
+    }
+
     async function refreshAll() {
       try {
         const [healthInfo, repoReply, hookReply, eventReply, lfsReply] = await Promise.all([
@@ -332,10 +317,6 @@
 
         document.getElementById("stat-backend").textContent = healthInfo.lfsBackend || "local";
         document.getElementById("stat-repos").textContent = healthInfo.metrics.repoCount;
-        document.getElementById("stat-lfs").textContent = healthInfo.metrics.lfsObjectCount;
-        document.getElementById("stat-hooks").textContent = healthInfo.metrics.webhookCount;
-        document.getElementById("stat-pushes").textContent = healthInfo.metrics.pushEventCount;
-
         renderRepos(repoReply.repos || []);
         renderHooks(hookReply.webhooks || []);
         renderEvents(eventReply.events || []);
@@ -530,7 +511,7 @@
       }
     }
 
-    refreshAll();
+    switchTab("plans");
   </script>
 </body>
 </html>

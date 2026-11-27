@@ -4,7 +4,7 @@
 
 ## What it does
 
-Implements Git Smart HTTP, Git LFS batch storage, upstream mirrors, signed push webhooks, a local CI runner, and the RIOT dashboard.
+Implements Git Smart HTTP, Git LFS batch storage, upstream mirrors, signed push webhooks, a local CI runner, a `.plan` reader (`/api/plans` + Plans dashboard), and the RIOT forge dashboard.
 
 ## Quick start
 
@@ -22,7 +22,8 @@ CGO_ENABLED=0 go test ./...
 ## Configuration
 
 - **Port:** 8090
-- **Key configuration:** MW_LAB_ADDR · MW_LAB_DATA_DIR · MW_LAB_TOKEN
+- **Key configuration:** MW_LAB_ADDR · MW_LAB_DATA_DIR · MW_LAB_TOKEN · MW_LAB_PLAN_DIR
+- **Plan reader:** set `MW_LAB_PLAN_DIR` to a workspace `.plan` directory (default `../.plan`); browse plans at `/` (Plans tab) or via `GET /api/plans`
 
 ```bash
 docker build -t mw-lab .

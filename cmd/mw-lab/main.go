@@ -39,6 +39,7 @@ func main() {
 	echoToken := strings.TrimSpace(os.Getenv("MW_ECHO_TOKEN"))
 	echoProject := envOrDefault("MW_ECHO_PROJECT", "mw-lab")
 	allowFileMirror := envBool("MW_LAB_ALLOW_FILE_MIRROR", false)
+	planRoot := envOrDefault("MW_LAB_PLAN_DIR", "../.plan")
 
 	// Google Drive backend config
 	gdriveClientID := strings.TrimSpace(os.Getenv("MW_LAB_GDRIVE_CLIENT_ID"))
@@ -109,6 +110,7 @@ func main() {
 		RIDAudience: ridAudience,
 		Version:     appVersion,
 		MissionURL:  missionURL,
+		PlanRoot:    planRoot,
 	}, labStore, gitManager, dispatcher, lfsService)
 
 	httpServer := &http.Server{

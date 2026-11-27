@@ -16,6 +16,7 @@ import (
 	"github.com/A-L-L-A-H/mw-lab/internal/ci"
 	"github.com/A-L-L-A-H/mw-lab/internal/githttp"
 	"github.com/A-L-L-A-H/mw-lab/internal/lfs"
+	"github.com/A-L-L-A-H/mw-lab/internal/plan"
 	"github.com/A-L-L-A-H/mw-lab/internal/store"
 	"github.com/labstack/echo/v4"
 	"github.com/labstack/echo/v4/middleware"
@@ -25,36 +26,38 @@ import (
 var embeddedDashboardHTML string
 
 type Config struct {
-	Addr              string
-	AuthToken         string
-	RIDJWKSURL        string
-	RIDIssuer         string
-	RIDAudience       string
-	RIDVerifier       *auth.RIDVerifier
-	Version           string
-	MissionURL        string
-	CIHTTPClient      *http.Client
-	CIRunStore        *ci.RunStore
-	CIRunner          *ci.LocalRunner
-	CIWebhookSecret   string
-	CINtfyTopicURL    string
+	Addr            string
+	AuthToken       string
+	RIDJWKSURL      string
+	RIDIssuer       string
+	RIDAudience     string
+	RIDVerifier     *auth.RIDVerifier
+	Version         string
+	MissionURL      string
+	CIHTTPClient    *http.Client
+	CIRunStore      *ci.RunStore
+	CIRunner        *ci.LocalRunner
+	CIWebhookSecret string
+	CINtfyTopicURL  string
+	PlanRoot        string
 }
 
 type Server struct {
-	echoApp           *echo.Echo
-	dbStore           *store.Store
-	gitManager        *githttp.Manager
-	gitHandler        *githttp.Handler
-	dispatcher        *githttp.WebhookDispatcher
-	ciDispatcher      *ci.Dispatcher
-	ciRunStore        *ci.RunStore
-	ciRunner          *ci.LocalRunner
-	ciBadgesHandler   *ci.BadgesHandler
-	ciWebhookHandler  *ci.WebhookTriggerHandler
-	ciNtfyNotifier    *ci.NtfyNotifier
-	lfsService        *lfs.Service
-	ridVerifier       *auth.RIDVerifier
-	cfg               Config
+	echoApp          *echo.Echo
+	dbStore          *store.Store
+	gitManager       *githttp.Manager
+	gitHandler       *githttp.Handler
+	dispatcher       *githttp.WebhookDispatcher
+	ciDispatcher     *ci.Dispatcher
+	ciRunStore       *ci.RunStore
+	ciRunner         *ci.LocalRunner
+	ciBadgesHandler  *ci.BadgesHandler
+	ciWebhookHandler *ci.WebhookTriggerHandler
+	ciNtfyNotifier   *ci.NtfyNotifier
+	lfsService       *lfs.Service
+	ridVerifier      *auth.RIDVerifier
+	planHandler      *plan.Handler
+	cfg              Config
 }
 
 type webhookView struct {
@@ -171,10 +174,18 @@ func New(cfg Config, dbStore *store.Store, gitManager *githttp.Manager, dispatch
 		ciNtfyNotifier:   ciNtfyNotifier,
 		lfsService:       lfsService,
 		ridVerifier:      ridVerifier,
+		planHandler:      plan.NewHandler(resolvePlanRoot(cfg.PlanRoot)),
 		cfg:              cfg,
 	}
 	srv.registerRoutes()
 	return srv
+}
+
+func resolvePlanRoot(configured string) string {
+	if trimmed := strings.TrimSpace(configured); trimmed != "" {
+		return trimmed
+	}
+	return strings.TrimSpace(os.Getenv("MW_LAB_PLAN_DIR"))
 }
 
 func (s *Server) WaitCI() {
@@ -225,6 +236,9 @@ func (s *Server) registerRoutes() {
 	api.GET("/events", s.handleListAllEvents)
 
 	api.GET("/ci/runs", s.ciBadgesHandler.HandleListRuns)
+
+	api.GET("/plans", s.planHandler.HandleList)
+	api.GET("/plans/:id", s.planHandler.HandleGet)
 
 	// Public SVG Badges & External Webhook Ingestion
 	s.echoApp.GET("/api/ci/badges/:repo", s.ciBadgesHandler.HandleBadge)

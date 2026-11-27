@@ -388,4 +388,32 @@ func TestTriggerCIAndPushHookDispatch(t *testing.T) {
 		firstMission.Tasks[2].ID != "build" || !reflect.DeepEqual(firstMission.Tasks[2].DependsOn, []string{"test"}) {
 		t.Fatalf("unexpected 3-stage DAG: %+v", firstMission.Tasks)
 	}
+
+	// 3. Verify Local CI endpoints wired into Server (T16 & T17):
+	// GET /api/ci/badges/:repo, GET /api/ci/runs, and POST /api/ci/webhook
+	badgeResp, err := httpSrv.Client().Get(httpSrv.URL + "/api/ci/badges/ci-repo.svg")
+	if err != nil {
+		t.Fatalf("get badge: %v", err)
+	}
+	defer badgeResp.Body.Close()
+	if badgeResp.StatusCode != http.StatusOK {
+		t.Fatalf("expected badge 200, got %d", badgeResp.StatusCode)
+	}
+	badgeBody, _ := io.ReadAll(badgeResp.Body)
+	if !strings.Contains(string(badgeBody), "<svg") || !strings.Contains(string(badgeBody), "ci") {
+		t.Fatalf("unexpected badge body: %s", string(badgeBody))
+	}
+
+	runsResp, err := httpSrv.Client().Get(httpSrv.URL + "/api/ci/runs?repo=ci-repo")
+	if err != nil {
+		t.Fatalf("get runs: %v", err)
+	}
+	defer runsResp.Body.Close()
+	if runsResp.StatusCode != http.StatusOK {
+		t.Fatalf("expected runs 200, got %d", runsResp.StatusCode)
+	}
+	runsBody, _ := io.ReadAll(runsResp.Body)
+	if !strings.Contains(string(runsBody), `"runs":[]`) {
+		t.Fatalf("expected empty runs list, got: %s", string(runsBody))
+	}
 }

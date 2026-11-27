@@ -1,6 +1,7 @@
 package server
 
 import (
+	"context"
 	"crypto/subtle"
 	_ "embed"
 	"errors"
@@ -24,27 +25,36 @@ import (
 var embeddedDashboardHTML string
 
 type Config struct {
-	Addr         string
-	AuthToken    string
-	RIDJWKSURL   string
-	RIDIssuer    string
-	RIDAudience  string
-	RIDVerifier  *auth.RIDVerifier
-	Version      string
-	MissionURL   string
-	CIHTTPClient *http.Client
+	Addr              string
+	AuthToken         string
+	RIDJWKSURL        string
+	RIDIssuer         string
+	RIDAudience       string
+	RIDVerifier       *auth.RIDVerifier
+	Version           string
+	MissionURL        string
+	CIHTTPClient      *http.Client
+	CIRunStore        *ci.RunStore
+	CIRunner          *ci.LocalRunner
+	CIWebhookSecret   string
+	CINtfyTopicURL    string
 }
 
 type Server struct {
-	echoApp      *echo.Echo
-	dbStore      *store.Store
-	gitManager   *githttp.Manager
-	gitHandler   *githttp.Handler
-	dispatcher   *githttp.WebhookDispatcher
-	ciDispatcher *ci.Dispatcher
-	lfsService   *lfs.Service
-	ridVerifier  *auth.RIDVerifier
-	cfg          Config
+	echoApp           *echo.Echo
+	dbStore           *store.Store
+	gitManager        *githttp.Manager
+	gitHandler        *githttp.Handler
+	dispatcher        *githttp.WebhookDispatcher
+	ciDispatcher      *ci.Dispatcher
+	ciRunStore        *ci.RunStore
+	ciRunner          *ci.LocalRunner
+	ciBadgesHandler   *ci.BadgesHandler
+	ciWebhookHandler  *ci.WebhookTriggerHandler
+	ciNtfyNotifier    *ci.NtfyNotifier
+	lfsService        *lfs.Service
+	ridVerifier       *auth.RIDVerifier
+	cfg               Config
 }
 
 type webhookView struct {
@@ -94,16 +104,73 @@ func New(cfg Config, dbStore *store.Store, gitManager *githttp.Manager, dispatch
 
 	gitHandler := githttp.NewHandler(gitManager, dbStore, dispatcher)
 	gitHandler.SetCIDispatcher(ciDispatcher)
+
+	ciRunStore := cfg.CIRunStore
+	if ciRunStore == nil && dbStore != nil {
+		if createdStore, err := ci.NewRunStore(dbStore.DB()); err == nil {
+			ciRunStore = createdStore
+		}
+	}
+	if ciRunStore == nil {
+		ciRunStore, _ = ci.NewRunStore(nil)
+	}
+
+	ntfyTopicURL := strings.TrimSpace(cfg.CINtfyTopicURL)
+	if ntfyTopicURL == "" {
+		ntfyTopicURL = strings.TrimSpace(os.Getenv("MW_LAB_NTFY_URL"))
+	}
+	ciNtfyNotifier := ci.NewNtfyNotifier(ntfyTopicURL, cfg.CIHTTPClient)
+
+	ciRunner := cfg.CIRunner
+	if ciRunner == nil {
+		ciRunner = ci.NewLocalRunner(ci.LocalRunnerConfig{
+			Store: ciRunStore,
+			OnFailure: func(ctx context.Context, run ci.RunRecord) {
+				_ = ciNtfyNotifier.NotifyFailure(ctx, run)
+			},
+			AllowLocalClone: true,
+		})
+	}
+
+	ciBadgesHandler := ci.NewBadgesHandler(ciRunStore)
+
+	webhookSecret := strings.TrimSpace(cfg.CIWebhookSecret)
+	if webhookSecret == "" {
+		webhookSecret = strings.TrimSpace(os.Getenv("MW_LAB_CI_WEBHOOK_SECRET"))
+	}
+	ciWebhookHandler := ci.NewWebhookTriggerHandler(ci.WebhookTriggerConfig{
+		Secret: webhookSecret,
+		Runner: ciRunner,
+		RepoResolver: func(owner, repo string) (string, bool) {
+			if gitManager == nil {
+				return "", false
+			}
+			barePath, err := gitManager.RepoPath(owner, repo)
+			if err != nil {
+				return "", false
+			}
+			if stat, err := os.Stat(barePath); err == nil && stat.IsDir() {
+				return barePath, true
+			}
+			return "", false
+		},
+	})
+
 	srv := &Server{
-		echoApp:      echoApp,
-		dbStore:      dbStore,
-		gitManager:   gitManager,
-		gitHandler:   gitHandler,
-		dispatcher:   dispatcher,
-		ciDispatcher: ciDispatcher,
-		lfsService:   lfsService,
-		ridVerifier:  ridVerifier,
-		cfg:          cfg,
+		echoApp:          echoApp,
+		dbStore:          dbStore,
+		gitManager:       gitManager,
+		gitHandler:       gitHandler,
+		dispatcher:       dispatcher,
+		ciDispatcher:     ciDispatcher,
+		ciRunStore:       ciRunStore,
+		ciRunner:         ciRunner,
+		ciBadgesHandler:  ciBadgesHandler,
+		ciWebhookHandler: ciWebhookHandler,
+		ciNtfyNotifier:   ciNtfyNotifier,
+		lfsService:       lfsService,
+		ridVerifier:      ridVerifier,
+		cfg:              cfg,
 	}
 	srv.registerRoutes()
 	return srv
@@ -156,9 +223,23 @@ func (s *Server) registerRoutes() {
 	api.GET("/lfs/objects", s.handleListLFSObjects)
 	api.GET("/events", s.handleListAllEvents)
 
+	api.GET("/ci/runs", s.ciBadgesHandler.HandleListRuns)
+
+	// Public SVG Badges & External Webhook Ingestion
+	s.echoApp.GET("/api/ci/badges/:repo", s.ciBadgesHandler.HandleBadge)
+	s.echoApp.POST("/api/ci/webhook", s.ciWebhookHandler.HandleWebhook)
+
 	// Git Smart HTTP and Git LFS Batch API
 	s.gitHandler.RegisterRoutes(s.echoApp)
 	s.lfsService.RegisterRoutes(s.echoApp)
+}
+
+func (s *Server) CIRunner() *ci.LocalRunner {
+	return s.ciRunner
+}
+
+func (s *Server) CIRunStore() *ci.RunStore {
+	return s.ciRunStore
 }
 
 func (s *Server) bearerAuthMiddleware(expectedToken string) echo.MiddlewareFunc {

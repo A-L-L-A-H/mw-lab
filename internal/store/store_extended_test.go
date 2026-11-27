@@ -17,6 +17,26 @@ func openMemoryStore(t *testing.T) *Store {
 	return st
 }
 
+func createRepoUnit(t *testing.T, st *Store, owner, name string) {
+	t.Helper()
+	if _, err := st.CreateRepo(context.Background(), RepoRecord{Owner: owner, Name: name}); err != nil {
+		t.Fatalf("create repo %s/%s: %v", owner, name, err)
+	}
+}
+
+func newWildcardHook(t *testing.T, st *Store) *WebhookRecord {
+	t.Helper()
+	hook, err := st.CreateWebhook(context.Background(), WebhookRecord{
+		TargetURL: "https://hook.local/a",
+		Events:    "push,tag",
+		Active:    true,
+	})
+	if err != nil {
+		t.Fatalf("create webhook: %v", err)
+	}
+	return hook
+}
+
 func TestStoreOpenAndLifecycle(t *testing.T) {
 	if _, err := Open("   "); !errors.Is(err, ErrInvalidInput) {
 		t.Fatalf("expected ErrInvalidInput for blank path, got %v", err)
@@ -31,21 +51,15 @@ func TestStoreOpenAndLifecycle(t *testing.T) {
 	}
 }
 
-func TestStoreRepoOperationsExtended(t *testing.T) {
+func TestStoreRepoCreateAndList(t *testing.T) {
 	st := openMemoryStore(t)
 	ctx := context.Background()
 
 	if _, err := st.CreateRepo(ctx, RepoRecord{Owner: "", Name: "x"}); !errors.Is(err, ErrInvalidInput) {
 		t.Fatalf("expected ErrInvalidInput on missing owner, got %v", err)
 	}
-	_, err := st.CreateRepo(ctx, RepoRecord{Owner: "mw", Name: "alpha"})
-	if err != nil {
-		t.Fatalf("create alpha: %v", err)
-	}
-	_, err = st.CreateRepo(ctx, RepoRecord{Owner: "other", Name: "beta"})
-	if err != nil {
-		t.Fatalf("create beta: %v", err)
-	}
+	createRepoUnit(t, st, "mw", "alpha")
+	createRepoUnit(t, st, "other", "beta")
 
 	all, err := st.ListRepos(ctx, "")
 	if err != nil || len(all) != 2 {
@@ -55,6 +69,12 @@ func TestStoreRepoOperationsExtended(t *testing.T) {
 	if err != nil || len(filtered) != 1 || filtered[0].Name != "alpha" {
 		t.Fatalf("unexpected filtered repos: %+v err=%v", filtered, err)
 	}
+}
+
+func TestStoreRepoSyncAndDelete(t *testing.T) {
+	st := openMemoryStore(t)
+	ctx := context.Background()
+	createRepoUnit(t, st, "mw", "alpha")
 
 	if err := st.TouchRepoSync(ctx, "mw", "alpha", "https://example.com/alpha.git"); err != nil {
 		t.Fatalf("TouchRepoSync failed: %v", err)
@@ -134,7 +154,7 @@ func TestStoreLFSObjectsExtended(t *testing.T) {
 	}
 }
 
-func TestStoreWebhooksAndPushEventsExtended(t *testing.T) {
+func TestStoreWebhookValidationAndCreate(t *testing.T) {
 	st := openMemoryStore(t)
 	ctx := context.Background()
 
@@ -145,19 +165,20 @@ func TestStoreWebhooksAndPushEventsExtended(t *testing.T) {
 		t.Fatalf("expected ErrNotFound, got %v", err)
 	}
 
-	hook, err := st.CreateWebhook(ctx, WebhookRecord{
-		TargetURL: "https://hook.local/a",
-		Events:    "push,tag",
-		Active:    true,
-	})
-	if err != nil || hook.RepoOwner != "*" || hook.RepoName != "*" {
-		t.Fatalf("unexpected default wildcard webhook: %+v err=%v", hook, err)
+	hook := newWildcardHook(t, st)
+	if hook.RepoOwner != "*" || hook.RepoName != "*" {
+		t.Fatalf("unexpected default wildcard webhook: %+v", hook)
 	}
-
 	listed, err := st.ListWebhooks(ctx, "mw", "alpha")
 	if err != nil || len(listed) != 1 {
 		t.Fatalf("expected 1 wildcard webhook, got len=%d err=%v", len(listed), err)
 	}
+}
+
+func TestStoreWebhookMatchAndUpdate(t *testing.T) {
+	st := openMemoryStore(t)
+	ctx := context.Background()
+	hook := newWildcardHook(t, st)
 
 	matchedAll, err := st.MatchWebhooks(ctx, "mw", "alpha", "")
 	if err != nil || len(matchedAll) != 1 {
@@ -188,8 +209,14 @@ func TestStoreWebhooksAndPushEventsExtended(t *testing.T) {
 	if err := st.DeleteWebhook(ctx, hook.ID); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("expected ErrNotFound on second delete, got %v", err)
 	}
+}
 
-	if _, err := st.RecordPushEvent(ctx, PushEventRecord{RepoOwner: "mw", RepoName: "alpha", RefName: "refs/heads/main"}); err != nil {
+func TestStorePushEventsExtended(t *testing.T) {
+	st := openMemoryStore(t)
+	ctx := context.Background()
+
+	event := PushEventRecord{RepoOwner: "mw", RepoName: "alpha", RefName: "refs/heads/main"}
+	if _, err := st.RecordPushEvent(ctx, event); err != nil {
 		t.Fatalf("record push event: %v", err)
 	}
 	events, err := st.ListPushEvents(ctx, "mw", "alpha", 0)
@@ -198,7 +225,7 @@ func TestStoreWebhooksAndPushEventsExtended(t *testing.T) {
 	}
 }
 
-func TestStoreUsersSessionsTokensAndMembers(t *testing.T) {
+func TestStoreUsersExtended(t *testing.T) {
 	st := openMemoryStore(t)
 	ctx := context.Background()
 
@@ -228,9 +255,16 @@ func TestStoreUsersSessionsTokensAndMembers(t *testing.T) {
 	if n, err := st.CountUsers(ctx); err != nil || n != 1 {
 		t.Fatalf("expected 1 user, got n=%d err=%v", n, err)
 	}
+}
+
+func TestStoreSessionsExtended(t *testing.T) {
+	st := openMemoryStore(t)
+	ctx := context.Background()
+	u, _ := st.CreateUser(ctx, UserRecord{Username: "dan", Email: "dan@example.com", PasswordHash: "h"})
 
 	exp := time.Now().Add(time.Hour).UTC().Format(time.RFC3339Nano)
-	if err := st.CreateSession(ctx, SessionRecord{Token: "s1", UserID: u.ID, ExpiresAt: exp, CreatedAt: exp}); err != nil {
+	err := st.CreateSession(ctx, SessionRecord{Token: "s1", UserID: u.ID, ExpiresAt: exp, CreatedAt: exp})
+	if err != nil {
 		t.Fatalf("create session: %v", err)
 	}
 	if sess, err := st.GetSession(ctx, "s1"); err != nil || sess.UserID != u.ID {
@@ -240,6 +274,13 @@ func TestStoreUsersSessionsTokensAndMembers(t *testing.T) {
 	if _, err := st.GetSession(ctx, "s1"); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("expected ErrNotFound after delete session, got %v", err)
 	}
+}
+
+func TestStoreAccessTokensExtended(t *testing.T) {
+	st := openMemoryStore(t)
+	ctx := context.Background()
+	u, _ := st.CreateUser(ctx, UserRecord{Username: "eve", Email: "eve@example.com", PasswordHash: "h"})
+	exp := time.Now().Add(time.Hour).UTC().Format(time.RFC3339Nano)
 
 	tok, err := st.CreateAccessToken(ctx, AccessTokenRecord{
 		TokenHash: "h1", TokenPrefix: "pre", Name: "pat", UserID: u.ID, Scope: "full", ExpiresAt: exp,
@@ -259,10 +300,17 @@ func TestStoreUsersSessionsTokensAndMembers(t *testing.T) {
 	if err := st.DeleteAccessToken(ctx, tok.ID, u.ID); err != nil {
 		t.Fatalf("delete access token: %v", err)
 	}
+}
 
-	if err := st.UpsertRepoMember(ctx, RepoMemberRecord{
+func TestStoreRepoMembersExtended(t *testing.T) {
+	st := openMemoryStore(t)
+	ctx := context.Background()
+	u, _ := st.CreateUser(ctx, UserRecord{Username: "frank", Email: "frank@example.com", PasswordHash: "h"})
+
+	err := st.UpsertRepoMember(ctx, RepoMemberRecord{
 		RepoOwner: "mw", RepoName: "alpha", UserID: u.ID, Role: "write",
-	}); err != nil {
+	})
+	if err != nil {
 		t.Fatalf("upsert repo member: %v", err)
 	}
 	if role, err := st.GetRepoMemberRole(ctx, "mw", "alpha", u.ID); err != nil || role != "write" {

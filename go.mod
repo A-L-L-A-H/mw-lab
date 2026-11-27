@@ -1,6 +1,6 @@
 module github.com/A-L-L-A-H/mw-lab
 
-go 1.26.0
+go 1.26.11
 
 require (
 	github.com/labstack/echo/v4 v4.16.3

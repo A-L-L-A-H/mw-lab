@@ -1,0 +1,4 @@
+title = "mw-lab secret scanning"
+
+[extend]
+useDefault = true

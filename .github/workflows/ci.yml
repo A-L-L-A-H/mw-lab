@@ -51,17 +51,50 @@ jobs:
           mkdir -p ../mw-gdrive
           cat > ../mw-gdrive/go.mod <<'EOF'
           module github.com/A-L-L-A-H/mw-gdrive
+
           go 1.24
+
           require modernc.org/sqlite v1.34.3
           EOF
           cat > ../mw-gdrive/gdrive.go <<'EOF'
-          package mw_gdrive
+          package gdrive
+
+          import (
+              "context"
+              "io"
+          )
 
           type GDriveConfig struct {
               ClientID     string
               ClientSecret string
               RefreshToken string
+              RootFolderID string
               RootFolder   string
+              TokenURL     string
+              APIBase      string
+              UploadBase   string
+          }
+
+          type GDriveClient struct{}
+
+          func NewGDriveClient(cfg GDriveConfig) *GDriveClient {
+              return &GDriveClient{}
+          }
+
+          func (c *GDriveClient) Upload(ctx context.Context, name, mimeType string, data []byte) (string, error) {
+              return "", nil
+          }
+
+          func (c *GDriveClient) Download(ctx context.Context, fileID string) (io.ReadCloser, int64, error) {
+              return nil, 0, nil
+          }
+
+          func (c *GDriveClient) Exists(ctx context.Context, fileID string) (bool, error) {
+              return false, nil
+          }
+
+          func (c *GDriveClient) Delete(ctx context.Context, fileID string) error {
+              return nil
           }
           EOF
 
@@ -101,17 +134,50 @@ jobs:
           mkdir -p ../mw-gdrive
           cat > ../mw-gdrive/go.mod <<'EOF'
           module github.com/A-L-L-A-H/mw-gdrive
+
           go 1.24
+
           require modernc.org/sqlite v1.34.3
           EOF
           cat > ../mw-gdrive/gdrive.go <<'EOF'
-          package mw_gdrive
+          package gdrive
+
+          import (
+              "context"
+              "io"
+          )
 
           type GDriveConfig struct {
               ClientID     string
               ClientSecret string
               RefreshToken string
+              RootFolderID string
               RootFolder   string
+              TokenURL     string
+              APIBase      string
+              UploadBase   string
+          }
+
+          type GDriveClient struct{}
+
+          func NewGDriveClient(cfg GDriveConfig) *GDriveClient {
+              return &GDriveClient{}
+          }
+
+          func (c *GDriveClient) Upload(ctx context.Context, name, mimeType string, data []byte) (string, error) {
+              return "", nil
+          }
+
+          func (c *GDriveClient) Download(ctx context.Context, fileID string) (io.ReadCloser, int64, error) {
+              return nil, 0, nil
+          }
+
+          func (c *GDriveClient) Exists(ctx context.Context, fileID string) (bool, error) {
+              return false, nil
+          }
+
+          func (c *GDriveClient) Delete(ctx context.Context, fileID string) error {
+              return nil
           }
           EOF
 

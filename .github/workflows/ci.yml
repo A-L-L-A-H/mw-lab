@@ -5,57 +5,49 @@ on:
     branches: [main]
   pull_request:
     branches: [main]
+  workflow_dispatch:
 
 permissions:
   contents: read
-  packages: write
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
-  test:
+  verify:
+    name: Verify
     runs-on: ubuntu-latest
-    env:
-      CGO_ENABLED: "0"
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
 
-      - name: Setup Go
+      - name: Set up Go
         uses: actions/setup-go@v5
         with:
-          go-version: "1.24"
+          go-version-file: go.mod
+          check-latest: true
           cache: true
 
-      - name: Vet
+      - name: Check conventional commit messages
+        if: github.event_name == 'pull_request'
+        run: |
+          git log --format=%s origin/main..HEAD | while IFS= read -r msg; do
+            echo "$msg" | grep -qE '^(feat|fix|docs|chore|refactor|test|perf|build|ci|revert|security|deps|style|release)(\(.+\))?!?: .+' || { echo "Invalid: $msg"; exit 1; }
+          done
+
+      - name: gofmt
+        run: test -z "$(gofmt -l .)"
+
+      - name: go vet
         run: go vet ./...
 
-      - name: Test
-        run: go test -count=1 ./...
+      - name: go test
+        run: go test -count=1 -race ./...
 
-  docker:
-    needs: test
-    runs-on: ubuntu-latest
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
-
-      - name: Log in to GHCR
-        uses: docker/login-action@v3
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Build and push image
-        uses: docker/build-push-action@v6
-        with:
-          context: .
-          push: true
-          tags: |
-            ghcr.io/a-l-l-a-h/mw-lab:latest
-            ghcr.io/a-l-l-a-h/mw-lab:${{ github.sha }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+      - name: Coverage threshold
+        run: |
+          go test -coverprofile=coverage.out ./... >/dev/null
+          total=$(go tool cover -func=coverage.out | tail -1 | awk '{print $3}' | tr -d '%')
+          awk -v v="$total" 'BEGIN{exit !(v>=70)}' || { echo "Coverage $total% < 70%"; exit 1; }

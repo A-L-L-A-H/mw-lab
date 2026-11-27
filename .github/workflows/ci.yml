@@ -9,12 +9,30 @@ on:
 
 permissions:
   contents: read
+  security-events: write
 
 concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
+  commitlint:
+    name: Commitlint
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - name: Install commitlint
+        run: npm install -g @commitlint/cli @commitlint/config-conventional
+      - name: Run commitlint
+        run: npx commitlint --from=origin/main --to=HEAD --extends @commitlint/config-conventional
+
   verify:
     name: Verify
     runs-on: ubuntu-latest
@@ -30,18 +48,14 @@ jobs:
           check-latest: true
           cache: true
 
-      - name: Check conventional commit messages
-        if: github.event_name == 'pull_request'
-        run: |
-          git log --format=%s origin/main..HEAD | while IFS= read -r msg; do
-            echo "$msg" | grep -qE '^(feat|fix|docs|chore|refactor|test|perf|build|ci|revert|security|deps|style|release)(\(.+\))?!?: .+' || { echo "Invalid: $msg"; exit 1; }
-          done
-
       - name: gofmt
         run: test -z "$(gofmt -l .)"
 
       - name: go vet
         run: go vet ./...
+
+      - name: golangci-lint
+        uses: golangci/golangci-lint-action@v6
 
       - name: go test
         run: go test -count=1 -race ./...
@@ -52,8 +66,8 @@ jobs:
           total=$(go tool cover -func=coverage.out | tail -1 | awk '{print $3}' | tr -d '%')
           awk -v v="$total" 'BEGIN{exit !(v>=70)}' || { echo "Coverage $total% < 70%"; exit 1; }
 
-  secret-scan:
-    name: Secret scan
+  security:
+    name: Security
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -61,7 +75,17 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
 
-      - name: Run Gitleaks
+      - name: gitleaks
         uses: gitleaks/gitleaks-action@v2
         env:
+          GITLEAKS_LICENSE: ${{ secrets.GITLEAKS_LICENSE }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: govulncheck
+        run: |
+          go install golang.org/x/vuln/cmd/govulncheck@latest
+          govulncheck ./...
+
+      - name: Observability endpoints
+        run: |
+          grep -R --include='*.go' -E '/health|/metrics' . || { echo "No /health or /metrics endpoint found"; exit 1; }

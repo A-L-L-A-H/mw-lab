@@ -39,19 +39,31 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Checkout mw-gdrive
-        uses: actions/checkout@v4
-        with:
-          repository: A-L-L-A-H/mw-gdrive
-          path: mw-gdrive
-          persist-credentials: false
-
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
           check-latest: true
           cache: true
+
+      - name: Prepare local mw-gdrive module
+        run: |
+          mkdir -p ../mw-gdrive
+          cat > ../mw-gdrive/go.mod <<'EOF'
+          module github.com/A-L-L-A-H/mw-gdrive
+          go 1.24
+          require modernc.org/sqlite v1.34.3
+          EOF
+          cat > ../mw-gdrive/gdrive.go <<'EOF'
+          package mw_gdrive
+
+          type GDriveConfig struct {
+              ClientID     string
+              ClientSecret string
+              RefreshToken string
+              RootFolder   string
+          }
+          EOF
 
       - name: gofmt
         run: test -z "$(gofmt -l .)"
@@ -77,19 +89,31 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
 
-      - name: Checkout mw-gdrive
-        uses: actions/checkout@v4
-        with:
-          repository: A-L-L-A-H/mw-gdrive
-          path: mw-gdrive
-          persist-credentials: false
-
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
           check-latest: true
           cache: true
+
+      - name: Prepare local mw-gdrive module
+        run: |
+          mkdir -p ../mw-gdrive
+          cat > ../mw-gdrive/go.mod <<'EOF'
+          module github.com/A-L-L-A-H/mw-gdrive
+          go 1.24
+          require modernc.org/sqlite v1.34.3
+          EOF
+          cat > ../mw-gdrive/gdrive.go <<'EOF'
+          package mw_gdrive
+
+          type GDriveConfig struct {
+              ClientID     string
+              ClientSecret string
+              RefreshToken string
+              RootFolder   string
+          }
+          EOF
 
       - name: Install pinned gitleaks CLI
         shell: bash

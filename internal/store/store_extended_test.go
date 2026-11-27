@@ -24,7 +24,7 @@ func createRepoUnit(t *testing.T, st *Store, owner, name string) {
 	}
 }
 
-func newWildcardHook(t *testing.T, st *Store) *WebhookRecord {
+func newWildcardHook(t *testing.T, st *Store) WebhookRecord {
 	t.Helper()
 	hook, err := st.CreateWebhook(context.Background(), WebhookRecord{
 		TargetURL: "https://hook.local/a",

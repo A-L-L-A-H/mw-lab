@@ -149,7 +149,7 @@ func (s *echoStub) handleUpload(w http.ResponseWriter) {
 	}
 }
 
-func newUnitEchoBackend(t *testing.T nip, stub *echoStub) *Echo9DriveBackend {
+func newUnitEchoBackend(t *testing.T, stub *echoStub) *Echo9DriveBackend {
 	t.Helper()
 	backend, err := NewEcho9DriveBackend(stub.srv.URL, "secret-token", "proj", stub.srv.Client())
 	if err != nil {

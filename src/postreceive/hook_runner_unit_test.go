@@ -131,17 +131,22 @@ func TestParsePostReceiveStdinUnit(t *testing.T) {
 	}
 }
 
-func TestExecuteUpdatesEdgeCasesUnit(t *testing.T) {
+func TestExecuteUpdatesRepoValidation(t *testing.T) {
 	runner := NewContractHookRunner(RunnerConfig{Timeout: 5 * time.Second, MaxRefsPerPush: 1, MaxOutputBytes: 16})
 
 	if _, err := runner.ExecuteUpdates(context.Background(), "", nil); !errors.Is(err, ErrBareRepoNotFound) {
 		t.Fatalf("expected ErrBareRepoNotFound for empty path, got %v", err)
 	}
-	if _, err := runner.ExecuteUpdates(context.Background(), filepath.Join(t.TempDir(), "missing"), nil); !errors.Is(
+	missingDir := filepath.Join(t.TempDir(), "missing")
+	if _, err := runner.ExecuteUpdates(context.Background(), missingDir, nil); !errors.Is(
 		err, ErrBareRepoNotFound,
 	) {
 		t.Fatalf("expected ErrBareRepoNotFound for missing dir, got %v", err)
 	}
+}
+
+func TestExecuteUpdatesSkipsRefsWithoutContractSuite(t *testing.T) {
+	runner := NewContractHookRunner(RunnerConfig{Timeout: 5 * time.Second, MaxRefsPerPush: 1, MaxOutputBytes: 16})
 
 	bareDir, sha := seedBareRepoForUnitTest(t, true)
 	results, err := runner.ExecuteUpdates(context.Background(), bareDir, []RefUpdate{
@@ -162,7 +167,10 @@ func TestExecuteUpdatesEdgeCasesUnit(t *testing.T) {
 	if !results[3].Passed || !results[3].Skipped {
 		t.Fatalf("expected second ref skipped when no suite or ref cap hit: %+v", results[3])
 	}
+}
 
+func TestExecuteUpdatesRunsContractCommand(t *testing.T) {
+	bareDir, sha := seedBareRepoForUnitTest(t, true)
 	cmdRunner := NewContractHookRunner(RunnerConfig{
 		Timeout:        5 * time.Second,
 		MaxRefsPerPush: 1,
@@ -182,8 +190,12 @@ func TestExecuteUpdatesEdgeCasesUnit(t *testing.T) {
 	if !cmdResults[1].Skipped || !strings.Contains(cmdResults[1].Output, "max bounded refs") {
 		t.Fatalf("expected cap skipped result: %+v", cmdResults[1])
 	}
+}
 
+func TestExecuteUpdatesReportsContractFailure(t *testing.T) {
+	bareDir, sha := seedBareRepoForUnitTest(t, true)
 	failRunner := NewContractHookRunner(RunnerConfig{Timeout: 5 * time.Second, ContractCmd: "echo fail && exit 5"})
+
 	failResults, err := failRunner.ExecuteUpdates(context.Background(), bareDir, []RefUpdate{
 		{OldRev: ZeroSHA, NewRev: sha, Ref: "refs/heads/main"},
 	})

@@ -9,8 +9,7 @@ import (
 	"testing"
 	"time"
 
-	"// github.com/A-L-L-A-H/mw-gdrive (used in NewGDriveBackend)"
-	"github.com/A-L-L-A-H/mw-lab/internal/lfs"
+	mw_gdrive "github.com/A-L-L-A-H/mw-gdrive"
 )
 
 func TestGDriveBackend_Smoke(t *testing.T) {
@@ -34,12 +33,7 @@ func TestGDriveBackend_Smoke(t *testing.T) {
 	}
 
 	backend, err := NewGDriveBackend(
-		&mw_gdrive.GDriveConfig{
-			ClientID:     clientID,
-			ClientSecret: clientSecret,
-			RefreshToken: refreshToken,
-			RootFolder:   "mw-lab-test",
-		},
+		cfg,
 		"mw-lab-test",
 		&http.Client{Timeout: 5 * time.Minute},
 	)
@@ -52,7 +46,7 @@ func TestGDriveBackend_Smoke(t *testing.T) {
 	// Test Put
 	oid := "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
 	content := strings.NewReader("hello google drive from mw-lab")
-	storageRef, err := backend.Put(ctx, oid, strings.NewReader("hello google drive from mw-lab"), 0)
+	storageRef, err := backend.Put(ctx, oid, content, 0)
 	if err != nil {
 		t.Fatalf("Put: %v", err)
 	}

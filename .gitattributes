@@ -1,0 +1,13 @@
+# Normalize line endings
+* text=auto
+
+# Go source must be LF for gofmt
+*.go text eol=lf
+*.mod text eol=lf
+*.sum text eol=lf
+
+# Scripts and workflow files
+*.sh text eol=lf
+*.yml text eol=lf
+*.yaml text eol=lf
+*.toml text eol=lf

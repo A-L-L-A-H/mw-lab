@@ -1151,7 +1151,7 @@ func (s *Store) GetAccessTokenByHash(ctx context.Context, hash string) (AccessTo
 SELECT id, token_hash, token_prefix, name, user_id, scope, last_used_at, expires_at, created_at
 FROM access_tokens WHERE token_hash = ?`, hash).Scan(
 		&rec.ID, &rec.TokenHash, &rec.TokenPrefix, &rec.Name, &rec.UserID,
-	&rec.Scope, &rec.LastUsedAt, &rec.ExpiresAt, &rec.CreatedAt,
+		&rec.Scope, &rec.LastUsedAt, &rec.ExpiresAt, &rec.CreatedAt,
 	)
 	if errors.Is(err, sql.ErrNoRows) {
 		return AccessTokenRecord{}, ErrNotFound
@@ -1173,7 +1173,7 @@ FROM access_tokens WHERE user_id = ? ORDER BY id DESC`, userID)
 		if err := rows.Scan(
 			&rec.ID, &rec.TokenHash, &rec.TokenPrefix, &rec.Name, &rec.UserID,
 			&rec.Scope, &rec.LastUsedAt, &rec.ExpiresAt, &rec.CreatedAt,
-	); err != nil {
+		); err != nil {
 			return nil, err
 		}
 		out = append(out, rec)
@@ -1206,4 +1206,3 @@ SELECT role FROM repo_members WHERE repo_owner = ? AND repo_name = ? AND user_id
 	}
 	return role, err
 }
-

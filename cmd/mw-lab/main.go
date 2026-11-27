@@ -13,8 +13,10 @@ import (
 	"syscall"
 	"time"
 
+	mw_gdrive "github.com/A-L-L-A-H/mw-gdrive"
 	"github.com/A-L-L-A-H/mw-lab/internal/githttp"
 	"github.com/A-L-L-A-H/mw-lab/internal/lfs"
+	lfs_gdrive "github.com/A-L-L-A-H/mw-lab/internal/lfs/gdrive"
 	"github.com/A-L-L-A-H/mw-lab/internal/server"
 	"github.com/A-L-L-A-H/mw-lab/internal/store"
 )
@@ -38,6 +40,15 @@ func main() {
 	echoProject := envOrDefault("MW_ECHO_PROJECT", "mw-lab")
 	allowFileMirror := envBool("MW_LAB_ALLOW_FILE_MIRROR", false)
 
+	// Google Drive backend config
+	gdriveClientID := strings.TrimSpace(os.Getenv("MW_LAB_GDRIVE_CLIENT_ID"))
+	gdriveClientSecret := strings.TrimSpace(os.Getenv("MW_LAB_GDRIVE_CLIENT_SECRET"))
+	gdriveRefreshToken := strings.TrimSpace(os.Getenv("MW_LAB_GDRIVE_REFRESH_TOKEN"))
+	gdriveRootFolder := strings.TrimSpace(os.Getenv("MW_LAB_GDRIVE_ROOT_FOLDER"))
+	if gdriveRootFolder == "" {
+		gdriveRootFolder = "mw-lab"
+	}
+
 	labStore, err := store.Open(dbPath)
 	if err != nil {
 		log.Fatalf("open store: %v", err)
@@ -50,12 +61,27 @@ func main() {
 	}
 
 	var lfsBackend lfs.BlobBackend
+
+	// Priority: MW_ECHO_URL > MW_LAB_GDRIVE_* > local disk
 	if echoBaseURL != "" {
 		lfsBackend, err = lfs.NewEcho9DriveBackend(echoBaseURL, echoToken, echoProject, nil)
 		if err != nil {
 			log.Fatalf("init mw-echo 9drive lfs backend: %v", err)
 		}
 		log.Printf("mw-lab LFS backend: mw-echo 9Drive (%s)", echoBaseURL)
+	} else if gdriveClientID != "" && gdriveClientSecret != "" && gdriveRefreshToken != "" {
+		gdriveCfg := &mw_gdrive.GDriveConfig{
+			ClientID:     gdriveClientID,
+			ClientSecret: gdriveClientSecret,
+			RefreshToken: gdriveRefreshToken,
+			RootFolder:   gdriveRootFolder,
+		}
+		gdriveBackend, err := lfs_gdrive.NewGDriveBackend(gdriveCfg, gdriveRootFolder, &http.Client{Timeout: 5 * time.Minute})
+		if err != nil {
+			log.Fatalf("init google drive lfs backend: %v", err)
+		}
+		lfsBackend = gdriveBackend
+		log.Printf("mw-lab LFS backend: Google Drive (%s)", gdriveRootFolder)
 	} else {
 		lfsBackend, err = lfs.NewLocalDiskBackend(lfsDir)
 		if err != nil {

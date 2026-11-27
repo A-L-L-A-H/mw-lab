@@ -220,6 +220,51 @@ CREATE TABLE IF NOT EXISTS push_events (
 );
 
 CREATE INDEX IF NOT EXISTS idx_push_events_repo ON push_events(repo_owner, repo_name, id DESC);
+
+CREATE TABLE IF NOT EXISTS users (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    username TEXT NOT NULL UNIQUE,
+    email TEXT NOT NULL UNIQUE,
+    password_hash TEXT NOT NULL,
+    is_admin INTEGER NOT NULL DEFAULT 0,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS sessions (
+    token TEXT PRIMARY KEY,
+    user_id INTEGER NOT NULL,
+    expires_at TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
+);
+CREATE INDEX IF NOT EXISTS idx_sessions_user ON sessions(user_id);
+CREATE INDEX IF NOT EXISTS idx_sessions_expires ON sessions(expires_at);
+
+CREATE TABLE IF NOT EXISTS access_tokens (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    token_hash TEXT NOT NULL UNIQUE,
+    token_prefix TEXT NOT NULL,
+    name TEXT NOT NULL,
+    user_id INTEGER NOT NULL,
+    scope TEXT NOT NULL DEFAULT 'full',
+    last_used_at TEXT NOT NULL DEFAULT '',
+    expires_at TEXT NOT NULL DEFAULT '',
+    created_at TEXT NOT NULL,
+    FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
+);
+CREATE INDEX IF NOT EXISTS idx_access_tokens_user ON access_tokens(user_id);
+CREATE INDEX IF NOT EXISTS idx_access_tokens_hash ON access_tokens(token_hash);
+
+CREATE TABLE IF NOT EXISTS repo_members (
+    repo_owner TEXT NOT NULL,
+    repo_name TEXT NOT NULL,
+    user_id INTEGER NOT NULL,
+    role TEXT NOT NULL DEFAULT 'write', -- admin, write, read
+    created_at TEXT NOT NULL,
+    PRIMARY KEY(repo_owner, repo_name, user_id),
+    FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
+);
 `
 	if _, err := s.db.Exec(schema); err != nil {
 		return fmt.Errorf("migrate sqlite schema: %w", err)
@@ -957,3 +1002,208 @@ FROM push_events WHERE 1=1`
 	}
 	return events, rows.Err()
 }
+
+// --- Users & Access Control ---
+
+type UserRecord struct {
+	ID           int64  `json:"id"`
+	Username     string `json:"username"`
+	Email        string `json:"email"`
+	PasswordHash string `json:"-"`
+	IsAdmin      bool   `json:"isAdmin"`
+	CreatedAt    string `json:"createdAt"`
+	UpdatedAt    string `json:"updatedAt"`
+}
+
+type SessionRecord struct {
+	Token     string `json:"token"`
+	UserID    int64  `json:"userId"`
+	ExpiresAt string `json:"expiresAt"`
+	CreatedAt string `json:"createdAt"`
+}
+
+type AccessTokenRecord struct {
+	ID          int64  `json:"id"`
+	TokenHash   string `json:"tokenHash"`
+	TokenPrefix string `json:"tokenPrefix"`
+	Name        string `json:"name"`
+	UserID      int64  `json:"userId"`
+	Scope       string `json:"scope"`
+	LastUsedAt  string `json:"lastUsedAt"`
+	ExpiresAt   string `json:"expiresAt"`
+	CreatedAt   string `json:"createdAt"`
+}
+
+type RepoMemberRecord struct {
+	RepoOwner string `json:"repoOwner"`
+	RepoName  string `json:"repoName"`
+	UserID    int64  `json:"userId"`
+	Role      string `json:"role"`
+	CreatedAt string `json:"createdAt"`
+}
+
+func (s *Store) CreateUser(ctx context.Context, draft UserRecord) (UserRecord, error) {
+	stamp := nowUTC()
+	result, err := s.db.ExecContext(ctx, `
+INSERT INTO users (username, email, password_hash, is_admin, created_at, updated_at)
+VALUES (?, ?, ?, ?, ?, ?)`,
+		draft.Username, draft.Email, draft.PasswordHash, boolToInt(draft.IsAdmin), stamp, stamp,
+	)
+	if err != nil {
+		if isUniqueConstraintError(err) {
+			return UserRecord{}, fmt.Errorf("%w: username or email already exists", ErrAlreadyExists)
+		}
+		return UserRecord{}, fmt.Errorf("insert user: %w", err)
+	}
+	insertedID, _ := result.LastInsertId()
+	draft.ID = insertedID
+	draft.CreatedAt = stamp
+	draft.UpdatedAt = stamp
+	return draft, nil
+}
+
+func (s *Store) GetUserByUsername(ctx context.Context, username string) (UserRecord, error) {
+	var u UserRecord
+	var adminFlag int
+	err := s.db.QueryRowContext(ctx, `
+SELECT id, username, email, password_hash, is_admin, created_at, updated_at
+FROM users WHERE username = ?`, username).Scan(
+		&u.ID, &u.Username, &u.Email, &u.PasswordHash, &adminFlag, &u.CreatedAt, &u.UpdatedAt,
+	)
+	if errors.Is(err, sql.ErrNoRows) {
+		return UserRecord{}, ErrNotFound
+	}
+	if err != nil {
+		return UserRecord{}, fmt.Errorf("query user: %w", err)
+	}
+	u.IsAdmin = adminFlag != 0
+	return u, nil
+}
+
+func (s *Store) GetUserByID(ctx context.Context, id int64) (UserRecord, error) {
+	var u UserRecord
+	var adminFlag int
+	err := s.db.QueryRowContext(ctx, `
+SELECT id, username, email, password_hash, is_admin, created_at, updated_at
+FROM users WHERE id = ?`, id).Scan(
+		&u.ID, &u.Username, &u.Email, &u.PasswordHash, &adminFlag, &u.CreatedAt, &u.UpdatedAt,
+	)
+	if errors.Is(err, sql.ErrNoRows) {
+		return UserRecord{}, ErrNotFound
+	}
+	if err != nil {
+		return UserRecord{}, fmt.Errorf("query user: %w", err)
+	}
+	u.IsAdmin = adminFlag != 0
+	return u, nil
+}
+
+func (s *Store) CountUsers(ctx context.Context) (int64, error) {
+	var n int64
+	err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM users`).Scan(&n)
+	return n, err
+}
+
+func (s *Store) CreateSession(ctx context.Context, draft SessionRecord) error {
+	_, err := s.db.ExecContext(ctx, `
+INSERT INTO sessions (token, user_id, expires_at, created_at) VALUES (?, ?, ?, ?)`,
+		draft.Token, draft.UserID, draft.ExpiresAt, draft.CreatedAt,
+	)
+	return err
+}
+
+func (s *Store) GetSession(ctx context.Context, token string) (SessionRecord, error) {
+	var rec SessionRecord
+	err := s.db.QueryRowContext(ctx, `
+SELECT token, user_id, expires_at, created_at FROM sessions WHERE token = ?`, token).Scan(
+		&rec.Token, &rec.UserID, &rec.ExpiresAt, &rec.CreatedAt,
+	)
+	if errors.Is(err, sql.ErrNoRows) {
+		return SessionRecord{}, ErrNotFound
+	}
+	return rec, err
+}
+
+func (s *Store) DeleteSession(ctx context.Context, token string) error {
+	_, err := s.db.ExecContext(ctx, `DELETE FROM sessions WHERE token = ?`, token)
+	return err
+}
+
+func (s *Store) CreateAccessToken(ctx context.Context, draft AccessTokenRecord) (AccessTokenRecord, error) {
+	stamp := nowUTC()
+	result, err := s.db.ExecContext(ctx, `
+INSERT INTO access_tokens (token_hash, token_prefix, name, user_id, scope, expires_at, created_at)
+VALUES (?, ?, ?, ?, ?, ?, ?)`,
+		draft.TokenHash, draft.TokenPrefix, draft.Name, draft.UserID, draft.Scope, draft.ExpiresAt, stamp,
+	)
+	if err != nil {
+		return AccessTokenRecord{}, err
+	}
+	insertedID, _ := result.LastInsertId()
+	draft.ID = insertedID
+	draft.CreatedAt = stamp
+	return draft, nil
+}
+
+func (s *Store) GetAccessTokenByHash(ctx context.Context, hash string) (AccessTokenRecord, error) {
+	var rec AccessTokenRecord
+	err := s.db.QueryRowContext(ctx, `
+SELECT id, token_hash, token_prefix, name, user_id, scope, last_used_at, expires_at, created_at
+FROM access_tokens WHERE token_hash = ?`, hash).Scan(
+		&rec.ID, &rec.TokenHash, &rec.TokenPrefix, &rec.Name, &rec.UserID,
+	&rec.Scope, &rec.LastUsedAt, &rec.ExpiresAt, &rec.CreatedAt,
+	)
+	if errors.Is(err, sql.ErrNoRows) {
+		return AccessTokenRecord{}, ErrNotFound
+	}
+	return rec, err
+}
+
+func (s *Store) ListAccessTokens(ctx context.Context, userID int64) ([]AccessTokenRecord, error) {
+	rows, err := s.db.QueryContext(ctx, `
+SELECT id, token_hash, token_prefix, name, user_id, scope, last_used_at, expires_at, created_at
+FROM access_tokens WHERE user_id = ? ORDER BY id DESC`, userID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []AccessTokenRecord
+	for rows.Next() {
+		var rec AccessTokenRecord
+		if err := rows.Scan(
+			&rec.ID, &rec.TokenHash, &rec.TokenPrefix, &rec.Name, &rec.UserID,
+			&rec.Scope, &rec.LastUsedAt, &rec.ExpiresAt, &rec.CreatedAt,
+	); err != nil {
+			return nil, err
+		}
+		out = append(out, rec)
+	}
+	return out, rows.Err()
+}
+
+func (s *Store) DeleteAccessToken(ctx context.Context, id, userID int64) error {
+	_, err := s.db.ExecContext(ctx, `DELETE FROM access_tokens WHERE id = ? AND user_id = ?`, id, userID)
+	return err
+}
+
+func (s *Store) UpsertRepoMember(ctx context.Context, draft RepoMemberRecord) error {
+	_, err := s.db.ExecContext(ctx, `
+INSERT INTO repo_members (repo_owner, repo_name, user_id, role, created_at)
+VALUES (?, ?, ?, ?, ?)
+ON CONFLICT(repo_owner, repo_name, user_id) DO UPDATE SET role = excluded.role`,
+		draft.RepoOwner, draft.RepoName, draft.UserID, draft.Role, nowUTC(),
+	)
+	return err
+}
+
+func (s *Store) GetRepoMemberRole(ctx context.Context, owner, name string, userID int64) (string, error) {
+	var role string
+	err := s.db.QueryRowContext(ctx, `
+SELECT role FROM repo_members WHERE repo_owner = ? AND repo_name = ? AND user_id = ?`,
+		owner, name, userID).Scan(&role)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", ErrNotFound
+	}
+	return role, err
+}
+

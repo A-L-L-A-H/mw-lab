@@ -20,12 +20,32 @@ import (
 	"github.com/A-L-L-A-H/mw-lab/internal/store"
 )
 
+func httpAuthRequest(method, url string, body io.Reader, authToken string) (*http.Request, error) {
+	req, err := http.NewRequest(method, url, body)
+	if err != nil {
+		return nil, err
+	}
+	if authToken != "" {
+		req.Header.Set("Authorization", "Bearer "+authToken)
+	}
+	if body != nil {
+		req.Header.Set("Content-Type", "application/json")
+	}
+	return req, nil
+}
+
 func execGit(t *testing.T, dir string, args ...string) {
 	t.Helper()
-	cmd := exec.Command("git", args...)
+	var gitArgs []string
+	if token := os.Getenv("MW_TEST_AUTH_TOKEN"); token != "" {
+		gitArgs = append(gitArgs, "-c", "http.extraheader=Authorization: Bearer "+token)
+	}
+	gitArgs = append(gitArgs, args...)
+	cmd := exec.Command("git", gitArgs...)
 	cmd.Dir = dir
 	cmd.Env = append(os.Environ(),
 		"GIT_TERMINAL_PROMPT=0",
+		"GIT_ASKPASS=",
 		"GIT_AUTHOR_NAME=Server Test",
 		"GIT_AUTHOR_EMAIL=server@moonwitness.local",
 		"GIT_COMMITTER_NAME=Server Test",
@@ -59,7 +79,9 @@ func TestServerEndToEndAPIAndDashboard(t *testing.T) {
 	}
 	dispatcher := githttp.NewWebhookDispatcher(labStore, nil)
 
-	labServer := New(Config{Version: "test-1.0"}, labStore, gitMgr, dispatcher, lfsSvc)
+	authToken := "test-token-123"
+	t.Setenv("MW_TEST_AUTH_TOKEN", authToken)
+	labServer := New(Config{Version: "test-1.0", AuthToken: authToken}, labStore, gitMgr, dispatcher, lfsSvc)
 	httpSrv := httptest.NewServer(labServer.Handler())
 	defer httpSrv.Close()
 
@@ -87,11 +109,12 @@ func TestServerEndToEndAPIAndDashboard(t *testing.T) {
 	}
 
 	// 3. Create repository via POST /api/repos.
-	createResp, err := httpSrv.Client().Post(httpSrv.URL+"/api/repos", "application/json", bytes.NewBufferString(`{
+	createReq, _ := httpAuthRequest(http.MethodPost, httpSrv.URL+"/api/repos", bytes.NewBufferString(`{
 		"owner": "moonwitness",
 		"name": "sovereign-demo",
 		"description": "E2E API repo"
-	}`))
+	}`), authToken)
+	createResp, err := httpSrv.Client().Do(createReq)
 	if err != nil {
 		t.Fatalf("post /api/repos: %v", err)
 	}
@@ -115,7 +138,8 @@ func TestServerEndToEndAPIAndDashboard(t *testing.T) {
 	execGit(t, workDir, "push", "-u", "origin", "main")
 	dispatcher.Wait()
 
-	commitsResp, err := httpSrv.Client().Get(httpSrv.URL + "/api/repos/moonwitness/sovereign-demo/commits")
+	commitsReq, _ := httpAuthRequest(http.MethodGet, httpSrv.URL+"/api/repos/moonwitness/sovereign-demo/commits", nil, authToken)
+	commitsResp, err := httpSrv.Client().Do(commitsReq)
 	if err != nil {
 		t.Fatalf("get commits: %v", err)
 	}
@@ -129,7 +153,8 @@ func TestServerEndToEndAPIAndDashboard(t *testing.T) {
 		t.Fatalf("unexpected commits reply: status=%d body=%+v", commitsResp.StatusCode, commitsBody)
 	}
 
-	treeResp, err := httpSrv.Client().Get(httpSrv.URL + "/api/repos/moonwitness/sovereign-demo/tree?path=docs")
+	treeReq, _ := httpAuthRequest(http.MethodGet, httpSrv.URL+"/api/repos/moonwitness/sovereign-demo/tree?path=docs", nil, authToken)
+	treeResp, err := httpSrv.Client().Do(treeReq)
 	if err != nil {
 		t.Fatalf("get tree: %v", err)
 	}
@@ -143,7 +168,8 @@ func TestServerEndToEndAPIAndDashboard(t *testing.T) {
 		t.Fatalf("unexpected tree reply: status=%d body=%+v", treeResp.StatusCode, treeBody)
 	}
 
-	blobResp, err := httpSrv.Client().Get(httpSrv.URL + "/api/repos/moonwitness/sovereign-demo/blob?path=docs/manifest.txt")
+	blobReq, _ := httpAuthRequest(http.MethodGet, httpSrv.URL+"/api/repos/moonwitness/sovereign-demo/blob?path=docs/manifest.txt", nil, authToken)
+	blobResp, err := httpSrv.Client().Do(blobReq)
 	if err != nil {
 		t.Fatalf("get blob: %v", err)
 	}
@@ -155,13 +181,14 @@ func TestServerEndToEndAPIAndDashboard(t *testing.T) {
 	}
 
 	// 5. Webhook CRUD via /api/webhooks.
-	hookCreateResp, err := httpSrv.Client().Post(httpSrv.URL+"/api/webhooks", "application/json", bytes.NewBufferString(`{
+	hookCreateReq, _ := httpAuthRequest(http.MethodPost, httpSrv.URL+"/api/webhooks", bytes.NewBufferString(`{
 		"repoOwner": "moonwitness",
 		"repoName": "sovereign-demo",
 		"targetUrl": "http://127.0.0.1:9999/webhook",
 		"secret": "hook-secret",
 		"events": "push"
-	}`))
+	}`), authToken)
+	hookCreateResp, err := httpSrv.Client().Do(hookCreateReq)
 	if err != nil {
 		t.Fatalf("create webhook: %v", err)
 	}
@@ -175,10 +202,11 @@ func TestServerEndToEndAPIAndDashboard(t *testing.T) {
 	}
 
 	// 6. Trigger mirror sync into a second repo from local bare repo path.
-	mirrorCreateResp, err := httpSrv.Client().Post(httpSrv.URL+"/api/repos", "application/json", bytes.NewBufferString(`{
+	mirrorCreateReq, _ := httpAuthRequest(http.MethodPost, httpSrv.URL+"/api/repos", bytes.NewBufferString(`{
 		"owner": "moonwitness",
 		"name": "sovereign-mirror"
-	}`))
+	}`), authToken)
+	mirrorCreateResp, err := httpSrv.Client().Do(mirrorCreateReq)
 	if err != nil {
 		t.Fatalf("create mirror target repo: %v", err)
 	}
@@ -189,7 +217,8 @@ func TestServerEndToEndAPIAndDashboard(t *testing.T) {
 		t.Fatalf("repo path: %v", err)
 	}
 	mirrorReqBody, _ := json.Marshal(map[string]string{"upstreamUrl": sourceBarePath})
-	mirrorSyncResp, err := httpSrv.Client().Post(httpSrv.URL+"/api/repos/moonwitness/sovereign-mirror/mirror", "application/json", bytes.NewReader(mirrorReqBody))
+	mirrorSyncReq, _ := httpAuthRequest(http.MethodPost, httpSrv.URL+"/api/repos/moonwitness/sovereign-mirror/mirror", bytes.NewReader(mirrorReqBody), authToken)
+	mirrorSyncResp, err := httpSrv.Client().Do(mirrorSyncReq)
 	if err != nil {
 		t.Fatalf("post mirror sync: %v", err)
 	}
@@ -201,7 +230,7 @@ func TestServerEndToEndAPIAndDashboard(t *testing.T) {
 	}
 
 	// 7. Delete repo via DELETE /api/repos/:owner/:name.
-	delReq, _ := http.NewRequest(http.MethodDelete, httpSrv.URL+"/api/repos/moonwitness/sovereign-mirror", nil)
+	delReq, _ := httpAuthRequest(http.MethodDelete, httpSrv.URL+"/api/repos/moonwitness/sovereign-mirror", nil, authToken)
 	delResp, err := httpSrv.Client().Do(delReq)
 	if err != nil {
 		t.Fatalf("delete repo: %v", err)
@@ -313,11 +342,14 @@ func TestTriggerCIAndPushHookDispatch(t *testing.T) {
 	}
 
 	// 2. Configured server dispatches on git-receive-pack push AND on POST /api/repos/:owner/:name/trigger-ci.
+	authToken := "test-token-123"
 	configuredSrv := New(Config{
 		Version:      "test-ci",
+		AuthToken:    authToken,
 		MissionURL:   mockMissionSrv.URL,
 		CIHTTPClient: mockMissionSrv.Client(),
 	}, labStore, gitMgr, nil, lfsSvc)
+	t.Setenv("MW_TEST_AUTH_TOKEN", authToken)
 	httpSrv := httptest.NewServer(configuredSrv.Handler())
 	defer httpSrv.Close()
 
@@ -344,11 +376,8 @@ func TestTriggerCIAndPushHookDispatch(t *testing.T) {
 	configuredSrv.WaitCI()
 
 	// Manual trigger-ci endpoint returns 202 Accepted with dispatched mission JSON.
-	triggerResp, err := httpSrv.Client().Post(
-		httpSrv.URL+"/api/repos/moonwitness/ci-repo/trigger-ci",
-		"application/json",
-		bytes.NewBufferString(`{"pusher":"release-bot"}`),
-	)
+	triggerReq, _ := httpAuthRequest(http.MethodPost, httpSrv.URL+"/api/repos/moonwitness/ci-repo/trigger-ci", bytes.NewBufferString(`{"pusher":"release-bot"}`), authToken)
+	triggerResp, err := httpSrv.Client().Do(triggerReq)
 	if err != nil {
 		t.Fatalf("post trigger-ci: %v", err)
 	}
@@ -391,7 +420,8 @@ func TestTriggerCIAndPushHookDispatch(t *testing.T) {
 
 	// 3. Verify Local CI endpoints wired into Server (T16 & T17):
 	// GET /api/ci/badges/:repo, GET /api/ci/runs, and POST /api/ci/webhook
-	badgeResp, err := httpSrv.Client().Get(httpSrv.URL + "/api/ci/badges/ci-repo.svg")
+	badgeReq, _ := httpAuthRequest(http.MethodGet, httpSrv.URL+"/api/ci/badges/ci-repo.svg", nil, authToken)
+	badgeResp, err := httpSrv.Client().Do(badgeReq)
 	if err != nil {
 		t.Fatalf("get badge: %v", err)
 	}
@@ -404,7 +434,8 @@ func TestTriggerCIAndPushHookDispatch(t *testing.T) {
 		t.Fatalf("unexpected badge body: %s", string(badgeBody))
 	}
 
-	runsResp, err := httpSrv.Client().Get(httpSrv.URL + "/api/ci/runs?repo=ci-repo")
+	runsReq, _ := httpAuthRequest(http.MethodGet, httpSrv.URL+"/api/ci/runs?repo=ci-repo", nil, authToken)
+	runsResp, err := httpSrv.Client().Do(runsReq)
 	if err != nil {
 		t.Fatalf("get runs: %v", err)
 	}

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"compress/gzip"
 	"context"
+	"crypto/subtle"
 	"errors"
 	"fmt"
 	"io"
@@ -14,6 +15,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/A-L-L-A-H/mw-lab/internal/auth"
 	"github.com/A-L-L-A-H/mw-lab/internal/ci"
 	"github.com/A-L-L-A-H/mw-lab/internal/store"
 	"github.com/labstack/echo/v4"
@@ -24,6 +26,8 @@ type Handler struct {
 	dbStore      *store.Store
 	dispatcher   *WebhookDispatcher
 	ciDispatcher *ci.Dispatcher
+	authToken    string
+	ridVerifier  *auth.RIDVerifier
 }
 
 func NewHandler(manager *Manager, dbStore *store.Store, dispatcher *WebhookDispatcher) *Handler {
@@ -38,10 +42,70 @@ func (h *Handler) SetCIDispatcher(ciDispatcher *ci.Dispatcher) {
 	h.ciDispatcher = ciDispatcher
 }
 
+func (h *Handler) SetAuth(authToken string, ridVerifier *auth.RIDVerifier) {
+	h.authToken = authToken
+	h.ridVerifier = ridVerifier
+}
+
+// gitAuthMiddleware provides authentication for Git Smart HTTP endpoints.
+// Supports static bearer token (MW_LAB_TOKEN), OIDC JWT via RID verifier,
+// and Personal Access Tokens (PATs) via dbStore.
+// On success, sets "git_user" and "git_user_id" in context.
+func (h *Handler) gitAuthMiddleware(next echo.HandlerFunc) echo.HandlerFunc {
+	return func(c echo.Context) error {
+		authHeader := strings.TrimSpace(c.Request().Header.Get("Authorization"))
+		provided := strings.TrimPrefix(authHeader, "Bearer ")
+		if provided == authHeader {
+			// Not a Bearer token - check Basic Auth for backward compatibility
+			if basicUser, _, hasBasic := c.Request().BasicAuth(); hasBasic {
+				provided = strings.TrimSpace(basicUser)
+			} else {
+				provided = ""
+			}
+		}
+		provided = strings.TrimSpace(provided)
+		if provided == "" {
+			c.Response().Header().Set("WWW-Authenticate", `Bearer realm="mw-lab"`)
+			return c.String(http.StatusUnauthorized, "authentication required\n")
+		}
+
+		// Try static token first
+		if h.authToken != "" && subtle.ConstantTimeCompare([]byte(provided), []byte(h.authToken)) == 1 {
+			c.Set("git_user", "token")
+			c.Set("git_user_id", int64(0))
+			return next(c)
+		}
+
+		// Try OIDC JWT via RID verifier
+		if h.ridVerifier != nil {
+			claims, err := h.ridVerifier.Verify(c.Request().Context(), provided)
+			if err == nil {
+				c.Set("git_user", claims.Subject)
+				c.Set("git_user_id", int64(0)) // OIDC subject, not local user ID
+				return next(c)
+			}
+		}
+
+		// Try access token (PAT) via dbStore
+		if h.dbStore != nil {
+			hash := auth.TokenHash(provided)
+			if tokenRec, err := h.dbStore.GetAccessTokenByHash(c.Request().Context(), hash); err == nil {
+				c.Set("git_user", fmt.Sprintf("pat:%s", tokenRec.TokenPrefix))
+				c.Set("git_user_id", tokenRec.UserID)
+				return next(c)
+			}
+		}
+
+		c.Response().Header().Set("WWW-Authenticate", `Bearer realm="mw-lab"`)
+		return c.String(http.StatusUnauthorized, "invalid token\n")
+	}
+}
+
 func (h *Handler) RegisterRoutes(echoApp *echo.Echo) {
-	echoApp.GET("/:owner/:repo/info/refs", h.HandleInfoRefs)
-	echoApp.POST("/:owner/:repo/git-upload-pack", h.HandleUploadPack)
-	echoApp.POST("/:owner/:repo/git-receive-pack", h.HandleReceivePack)
+	g := echoApp.Group("", h.gitAuthMiddleware)
+	g.GET("/:owner/:repo/info/refs", h.HandleInfoRefs)
+	g.POST("/:owner/:repo/git-upload-pack", h.HandleUploadPack)
+	g.POST("/:owner/:repo/git-receive-pack", h.HandleReceivePack)
 }
 
 func (h *Handler) HandleInfoRefs(c echo.Context) error {
@@ -73,9 +137,15 @@ func (h *Handler) HandleInfoRefs(c echo.Context) error {
 }
 
 func (h *Handler) HandleUploadPack(c echo.Context) error {
-	_, _, repoPath, err := h.resolveTargetRepo(c)
+	owner, repoName, repoPath, err := h.resolveTargetRepo(c)
 	if err != nil {
 		return writeGitHTTPError(c, err)
+	}
+	// Check read access for private repos
+	if h.dbStore != nil {
+		if ok, _ := h.checkGitAccess(c, owner, repoName, "read"); !ok {
+			return c.String(http.StatusForbidden, "access denied\n")
+		}
 	}
 	return h.streamStatelessRPC(c, "upload-pack", "application/x-git-upload-pack-result", repoPath)
 }
@@ -84,6 +154,12 @@ func (h *Handler) HandleReceivePack(c echo.Context) error {
 	owner, repoName, repoPath, err := h.resolveTargetRepo(c)
 	if err != nil {
 		return writeGitHTTPError(c, err)
+	}
+	// Check write access
+	if h.dbStore != nil {
+		if ok, _ := h.checkGitAccess(c, owner, repoName, "write"); !ok {
+			return c.String(http.StatusForbidden, "access denied\n")
+		}
 	}
 
 	ctx := c.Request().Context()
@@ -97,8 +173,39 @@ func (h *Handler) HandleReceivePack(c echo.Context) error {
 	if snapErr != nil {
 		return nil
 	}
-	h.emitPushEvents(owner, repoName, detectPusher(c.Request()), beforeRefs, afterRefs)
+	h.emitPushEvents(owner, repoName, detectPusher(c), beforeRefs, afterRefs)
 	return nil
+}
+
+func (h *Handler) checkGitAccess(c echo.Context, owner, repoName, requiredRole string) (bool, error) {
+	// Static token / OIDC / PAT with user ID = 0 means admin-level access
+	if v := c.Get("git_user_id"); v != nil {
+		if id, ok := v.(int64); ok && id == 0 {
+			return true, nil
+		}
+	}
+	// For PAT users, check repo membership
+	if v := c.Get("git_user_id"); v != nil {
+		if id, ok := v.(int64); ok && id > 0 && h.dbStore != nil {
+			role, err := h.dbStore.GetRepoMemberRole(c.Request().Context(), owner, repoName, id)
+			if err == nil {
+				return roleHasAccess(role, requiredRole), nil
+			}
+		}
+	}
+	// For private repos without auth, deny
+	if h.dbStore != nil {
+		repo, err := h.dbStore.GetRepo(c.Request().Context(), owner, repoName)
+		if err == nil && repo.Private {
+			return false, nil
+		}
+	}
+	return true, nil // public repo
+}
+
+func roleHasAccess(userRole, required string) bool {
+	rank := map[string]int{"read": 1, "write": 2, "admin": 3}
+	return rank[userRole] >= rank[required]
 }
 
 func (h *Handler) streamStatelessRPC(c echo.Context, subcommand, contentType, repoPath string) error {
@@ -262,11 +369,19 @@ func decodeRequestBody(httpReq *http.Request) (io.Reader, func(), error) {
 	return httpReq.Body, func() {}, nil
 }
 
-func detectPusher(httpReq *http.Request) string {
-	if customPusher := strings.TrimSpace(httpReq.Header.Get("X-MW-Lab-Pusher")); customPusher != "" {
+func detectPusher(c echo.Context) string {
+	// First priority: authenticated identity from gitAuthMiddleware
+	if u := c.Get("git_user"); u != nil {
+		if s, ok := u.(string); ok && s != "" {
+			return s
+		}
+	}
+	// Fallback: custom header
+	if customPusher := strings.TrimSpace(c.Request().Header.Get("X-MW-Lab-Pusher")); customPusher != "" {
 		return customPusher
 	}
-	if basicUser, _, hasBasic := httpReq.BasicAuth(); hasBasic && strings.TrimSpace(basicUser) != "" {
+	// Fallback: Basic Auth (backward compatibility)
+	if basicUser, _, hasBasic := c.Request().BasicAuth(); hasBasic && strings.TrimSpace(basicUser) != "" {
 		return strings.TrimSpace(basicUser)
 	}
 	return "anonymous"

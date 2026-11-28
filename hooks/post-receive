@@ -1,0 +1,90 @@
+#!/usr/bin/env bash
+# V29: mw-lab bare-repository post-receive hook
+# Triggers bounded local contract tests on pushed branch commits.
+
+set -euo pipefail
+
+ZERO_SHA="0000000000000000000000000000000000000000"
+HOOK_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+BARE_REPO_DIR="${GIT_DIR:-$(cd "${HOOK_DIR}/.." && pwd)}"
+if [[ "${BARE_REPO_DIR}" == "." ]]; then
+  BARE_REPO_DIR="$(pwd)"
+else
+  BARE_REPO_DIR="$(cd "${BARE_REPO_DIR}" && pwd)"
+fi
+
+CONTRACT_TIMEOUT_SECS="${MW_LAB_CONTRACT_TIMEOUT_SECS:-30}"
+CONTRACT_MAX_COMMITS="${MW_LAB_CONTRACT_MAX_COMMITS:-3}"
+CONTRACT_RUNNER_SCRIPT="${MW_LAB_CONTRACT_RUNNER:-}"
+
+if [[ -z "${CONTRACT_RUNNER_SCRIPT}" ]]; then
+  for candidate in \
+    "${HOOK_DIR}/../scripts/run-contract-tests.sh" \
+    "${HOOK_DIR}/../../scripts/run-contract-tests.sh" \
+    "${MW_LAB_ROOT:-}/scripts/run-contract-tests.sh"; do
+    if [[ -n "${candidate}" && -f "${candidate}" ]]; then
+      CONTRACT_RUNNER_SCRIPT="${candidate}"
+      break
+    fi
+  done
+fi
+
+processed_count=0
+overall_status=0
+
+while read -r old_rev new_rev ref_name; do
+  [[ -z "${ref_name:-}" ]] && continue
+
+  # Ignore branch/tag deletions
+  if [[ "${new_rev}" == "${ZERO_SHA}" ]]; then
+    continue
+  fi
+
+  # Only trigger on branch heads (refs/heads/*)
+  if [[ "${ref_name}" != refs/heads/* ]]; then
+    continue
+  fi
+
+  processed_count=$((processed_count + 1))
+  if [[ "${processed_count}" -gt "${CONTRACT_MAX_COMMITS}" ]]; then
+    echo "[mw-lab:v29] bounded ref limit (${CONTRACT_MAX_COMMITS}) reached; skipping remaining refs"
+    break
+  fi
+
+  echo "[mw-lab:v29] post-receive contract check for ${ref_name} @ ${new_rev:0:12}"
+
+  if [[ -n "${CONTRACT_RUNNER_SCRIPT}" && -f "${CONTRACT_RUNNER_SCRIPT}" ]]; then
+    if ! bash "${CONTRACT_RUNNER_SCRIPT}" \
+      --bare-repo "${BARE_REPO_DIR}" \
+      --ref "${ref_name}" \
+      --old-rev "${old_rev}" \
+      --new-rev "${new_rev}" \
+      --timeout "${CONTRACT_TIMEOUT_SECS}"; then
+      overall_status=1
+    fi
+  else
+    # Fallback inline bounded contract verification using temporary checkout
+    work_tmp="$(mktemp -d 2>/dev/null || mktemp -d -t mw-lab-contract)"
+    cleanup_tmp() {
+      rm -rf "${work_tmp}"
+    }
+    trap cleanup_tmp EXIT
+
+    git --git-dir="${BARE_REPO_DIR}" archive "${new_rev}" | tar -x -C "${work_tmp}"
+    if [[ -f "${work_tmp}/.mw-contract-test.sh" ]]; then
+      if command -v timeout >/dev/null 2>&1; then
+        if ! (cd "${work_tmp}" && timeout "${CONTRACT_TIMEOUT_SECS}" bash "./.mw-contract-test.sh"); then
+          overall_status=1
+        fi
+      else
+        if ! (cd "${work_tmp}" && bash "./.mw-contract-test.sh"); then
+          overall_status=1
+        fi
+      fi
+    fi
+    rm -rf "${work_tmp}"
+    trap - EXIT
+  fi
+done
+
+exit "${overall_status}"

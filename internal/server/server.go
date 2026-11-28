@@ -16,6 +16,7 @@ import (
 	"github.com/A-L-L-A-H/mw-lab/internal/ci"
 	"github.com/A-L-L-A-H/mw-lab/internal/githttp"
 	"github.com/A-L-L-A-H/mw-lab/internal/lfs"
+	"github.com/A-L-L-A-H/mw-lab/internal/plan"
 	"github.com/A-L-L-A-H/mw-lab/internal/store"
 	"github.com/labstack/echo/v4"
 	"github.com/labstack/echo/v4/middleware"
@@ -25,36 +26,38 @@ import (
 var embeddedDashboardHTML string
 
 type Config struct {
-	Addr              string
-	AuthToken         string
-	RIDJWKSURL        string
-	RIDIssuer         string
-	RIDAudience       string
-	RIDVerifier       *auth.RIDVerifier
-	Version           string
-	MissionURL        string
-	CIHTTPClient      *http.Client
-	CIRunStore        *ci.RunStore
-	CIRunner          *ci.LocalRunner
-	CIWebhookSecret   string
-	CINtfyTopicURL    string
+	Addr            string
+	AuthToken       string
+	RIDJWKSURL      string
+	RIDIssuer       string
+	RIDAudience     string
+	RIDVerifier     *auth.RIDVerifier
+	Version         string
+	MissionURL      string
+	CIHTTPClient    *http.Client
+	CIRunStore      *ci.RunStore
+	CIRunner        *ci.LocalRunner
+	CIWebhookSecret string
+	CINtfyTopicURL  string
+	PlanRoot        string
 }
 
 type Server struct {
-	echoApp           *echo.Echo
-	dbStore           *store.Store
-	gitManager        *githttp.Manager
-	gitHandler        *githttp.Handler
-	dispatcher        *githttp.WebhookDispatcher
-	ciDispatcher      *ci.Dispatcher
-	ciRunStore        *ci.RunStore
-	ciRunner          *ci.LocalRunner
-	ciBadgesHandler   *ci.BadgesHandler
-	ciWebhookHandler  *ci.WebhookTriggerHandler
-	ciNtfyNotifier    *ci.NtfyNotifier
-	lfsService        *lfs.Service
-	ridVerifier       *auth.RIDVerifier
-	cfg               Config
+	echoApp          *echo.Echo
+	dbStore          *store.Store
+	gitManager       *githttp.Manager
+	gitHandler       *githttp.Handler
+	dispatcher       *githttp.WebhookDispatcher
+	ciDispatcher     *ci.Dispatcher
+	ciRunStore       *ci.RunStore
+	ciRunner         *ci.LocalRunner
+	ciBadgesHandler  *ci.BadgesHandler
+	ciWebhookHandler *ci.WebhookTriggerHandler
+	ciNtfyNotifier   *ci.NtfyNotifier
+	lfsService       *lfs.Service
+	ridVerifier      *auth.RIDVerifier
+	planHandler      *plan.Handler
+	cfg              Config
 }
 
 type webhookView struct {
@@ -104,6 +107,7 @@ func New(cfg Config, dbStore *store.Store, gitManager *githttp.Manager, dispatch
 
 	gitHandler := githttp.NewHandler(gitManager, dbStore, dispatcher)
 	gitHandler.SetCIDispatcher(ciDispatcher)
+	gitHandler.SetAuth(strings.TrimSpace(cfg.AuthToken), ridVerifier)
 
 	ciRunStore := cfg.CIRunStore
 	if ciRunStore == nil && dbStore != nil {
@@ -170,10 +174,18 @@ func New(cfg Config, dbStore *store.Store, gitManager *githttp.Manager, dispatch
 		ciNtfyNotifier:   ciNtfyNotifier,
 		lfsService:       lfsService,
 		ridVerifier:      ridVerifier,
+		planHandler:      plan.NewHandler(resolvePlanRoot(cfg.PlanRoot)),
 		cfg:              cfg,
 	}
 	srv.registerRoutes()
 	return srv
+}
+
+func resolvePlanRoot(configured string) string {
+	if trimmed := strings.TrimSpace(configured); trimmed != "" {
+		return trimmed
+	}
+	return strings.TrimSpace(os.Getenv("MW_LAB_PLAN_DIR"))
 }
 
 func (s *Server) WaitCI() {
@@ -225,9 +237,24 @@ func (s *Server) registerRoutes() {
 
 	api.GET("/ci/runs", s.ciBadgesHandler.HandleListRuns)
 
+	api.GET("/plans", s.planHandler.HandleList)
+	api.GET("/plans/:id", s.planHandler.HandleGet)
+
 	// Public SVG Badges & External Webhook Ingestion
 	s.echoApp.GET("/api/ci/badges/:repo", s.ciBadgesHandler.HandleBadge)
 	s.echoApp.POST("/api/ci/webhook", s.ciWebhookHandler.HandleWebhook)
+
+	// Auth endpoints (public)
+	s.echoApp.POST("/api/auth/signup", s.handleSignup)
+	s.echoApp.POST("/api/auth/login", s.handleLogin)
+	s.echoApp.POST("/api/auth/logout", s.handleLogout)
+	s.echoApp.GET("/api/auth/me", s.handleMe)
+
+	// Auth endpoints (protected)
+	authGroup := s.echoApp.Group("/api/auth", s.bearerAuthMiddleware(strings.TrimSpace(s.cfg.AuthToken)))
+	authGroup.POST("/tokens", s.handleCreateToken)
+	authGroup.GET("/tokens", s.handleListTokens)
+	authGroup.DELETE("/tokens/:id", s.handleDeleteToken)
 
 	// Git Smart HTTP and Git LFS Batch API
 	s.gitHandler.RegisterRoutes(s.echoApp)
@@ -245,27 +272,51 @@ func (s *Server) CIRunStore() *ci.RunStore {
 func (s *Server) bearerAuthMiddleware(expectedToken string) echo.MiddlewareFunc {
 	return func(next echo.HandlerFunc) echo.HandlerFunc {
 		return func(c echo.Context) error {
+			// Check Authorization: Bearer header
 			authHeader := strings.TrimSpace(c.Request().Header.Get("Authorization"))
 			provided := strings.TrimPrefix(authHeader, "Bearer ")
-			if provided == authHeader {
-				provided = ""
-			}
-			provided = strings.TrimSpace(provided)
-			if provided == "" {
-				return c.JSON(http.StatusUnauthorized, map[string]string{"error": "unauthorized"})
-			}
-			if expectedToken != "" && subtle.ConstantTimeCompare([]byte(provided), []byte(expectedToken)) == 1 {
-				return next(c)
-			}
-			if s.ridVerifier != nil {
-				claims, err := s.ridVerifier.Verify(c.Request().Context(), provided)
-				if err == nil {
-					c.Set("rid_subject", claims.Subject)
-					c.Set("rid_issuer", claims.Issuer)
-					c.Set("rid_scope", claims.Scope)
-					return next(c)
+			if provided != authHeader {
+				provided = strings.TrimSpace(provided)
+				if provided != "" {
+					if expectedToken != "" && subtle.ConstantTimeCompare([]byte(provided), []byte(expectedToken)) == 1 {
+						c.Set("auth_method", "static_token")
+						return next(c)
+					}
+					if s.ridVerifier != nil {
+						claims, err := s.ridVerifier.Verify(c.Request().Context(), provided)
+						if err == nil {
+							c.Set("rid_subject", claims.Subject)
+							c.Set("rid_issuer", claims.Issuer)
+							c.Set("rid_scope", claims.Scope)
+							c.Set("auth_method", "oidc")
+							return next(c)
+						}
+					}
+					// Check access token
+					if s.dbStore != nil {
+						hash := auth.TokenHash(provided)
+						if tokenRec, err := s.dbStore.GetAccessTokenByHash(c.Request().Context(), hash); err == nil {
+							c.Set("auth_method", "access_token")
+							c.Set("auth_user_id", tokenRec.UserID)
+							return next(c)
+						}
+					}
 				}
 			}
+
+			// Check session cookie
+			if cookie, err := c.Cookie("mw_lab_session"); err == nil && cookie.Value != "" {
+				if s.dbStore != nil {
+					if sessionRec, err := s.dbStore.GetSession(c.Request().Context(), cookie.Value); err == nil {
+						if sessionRec.ExpiresAt > time.Now().UTC().Format(time.RFC3339Nano) {
+							c.Set("auth_method", "session")
+							c.Set("auth_user_id", sessionRec.UserID)
+							return next(c)
+						}
+					}
+				}
+			}
+
 			return c.JSON(http.StatusUnauthorized, map[string]string{"error": "unauthorized"})
 		}
 	}
@@ -284,6 +335,266 @@ func (s *Server) handleHealth(c echo.Context) error {
 		"metrics":    metrics,
 		"timestamp":  time.Now().UTC().Format(time.RFC3339Nano),
 	})
+}
+
+// --- Auth endpoints ---
+
+func (s *Server) handleSignup(c echo.Context) error {
+	if s.dbStore == nil {
+		return c.JSON(http.StatusServiceUnavailable, map[string]string{"error": "user store not available"})
+	}
+	var body struct {
+		Username string `json:"username"`
+		Email    string `json:"email"`
+		Password string `json:"password"`
+	}
+	if err := c.Bind(&body); err != nil {
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": "invalid request"})
+	}
+	body.Username = strings.TrimSpace(body.Username)
+	body.Email = strings.TrimSpace(body.Email)
+	if body.Username == "" || body.Email == "" || body.Password == "" {
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": "username, email, password required"})
+	}
+
+	// First user becomes admin
+	count, _ := s.dbStore.CountUsers(c.Request().Context())
+	isAdmin := count == 0
+
+	hash, err := auth.HashPassword(body.Password)
+	if err != nil {
+		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "password hash failed"})
+	}
+
+	user, err := s.dbStore.CreateUser(c.Request().Context(), store.UserRecord{
+		Username:     body.Username,
+		Email:        body.Email,
+		PasswordHash: hash,
+		IsAdmin:      isAdmin,
+	})
+	if err != nil {
+		return c.JSON(http.StatusConflict, map[string]string{"error": err.Error()})
+	}
+
+	// Create session
+	tokenPair, _ := auth.CreateSessionToken()
+	expiresAt := tokenPair.ExpiresAt.UTC().Format(time.RFC3339Nano)
+	_ = s.dbStore.CreateSession(c.Request().Context(), store.SessionRecord{
+		Token:     tokenPair.Token,
+		UserID:    user.ID,
+		ExpiresAt: expiresAt,
+		CreatedAt: time.Now().UTC().Format(time.RFC3339Nano),
+	})
+
+	c.SetCookie(&http.Cookie{
+		Name:     "mw_lab_session",
+		Value:    tokenPair.Token,
+		Path:     "/",
+		HttpOnly: true,
+		Secure:   false, // set true behind HTTPS
+		SameSite: http.SameSiteLaxMode,
+		Expires:  tokenPair.ExpiresAt,
+	})
+
+	return c.JSON(http.StatusCreated, map[string]any{
+		"user": map[string]any{"id": user.ID, "username": user.Username, "email": user.Email, "isAdmin": user.IsAdmin},
+	})
+}
+
+func (s *Server) handleLogin(c echo.Context) error {
+	if s.dbStore == nil {
+		return c.JSON(http.StatusServiceUnavailable, map[string]string{"error": "user store not available"})
+	}
+	var body struct {
+		Username string `json:"username"`
+		Password string `json:"password"`
+	}
+	if err := c.Bind(&body); err != nil {
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": "invalid request"})
+	}
+	body.Username = strings.TrimSpace(body.Username)
+
+	user, err := s.dbStore.GetUserByUsername(c.Request().Context(), body.Username)
+	if err != nil {
+		return c.JSON(http.StatusUnauthorized, map[string]string{"error": "invalid credentials"})
+	}
+	if err := auth.CheckPassword(user.PasswordHash, body.Password); err != nil {
+		return c.JSON(http.StatusUnauthorized, map[string]string{"error": "invalid credentials"})
+	}
+
+	tokenPair, _ := auth.CreateSessionToken()
+	expiresAt := tokenPair.ExpiresAt.UTC().Format(time.RFC3339Nano)
+	_ = s.dbStore.CreateSession(c.Request().Context(), store.SessionRecord{
+		Token:     tokenPair.Token,
+		UserID:    user.ID,
+		ExpiresAt: expiresAt,
+		CreatedAt: time.Now().UTC().Format(time.RFC3339Nano),
+	})
+
+	c.SetCookie(&http.Cookie{
+		Name:     "mw_lab_session",
+		Value:    tokenPair.Token,
+		Path:     "/",
+		HttpOnly: true,
+		Secure:   false,
+		SameSite: http.SameSiteLaxMode,
+		Expires:  tokenPair.ExpiresAt,
+	})
+
+	return c.JSON(http.StatusOK, map[string]any{
+		"user": map[string]any{"id": user.ID, "username": user.Username, "email": user.Email, "isAdmin": user.IsAdmin},
+	})
+}
+
+func (s *Server) handleLogout(c echo.Context) error {
+	if cookie, err := c.Cookie("mw_lab_session"); err == nil {
+		if s.dbStore != nil {
+			_ = s.dbStore.DeleteSession(c.Request().Context(), cookie.Value)
+		}
+		c.SetCookie(&http.Cookie{
+			Name:     "mw_lab_session",
+			Value:    "",
+			Path:     "/",
+			HttpOnly: true,
+			MaxAge:   -1,
+		})
+	}
+	return c.JSON(http.StatusOK, map[string]string{"message": "logged out"})
+}
+
+func (s *Server) handleMe(c echo.Context) error {
+	userID := c.Get("auth_user_id")
+	if userID == nil {
+		return c.JSON(http.StatusUnauthorized, map[string]string{"error": "not authenticated"})
+	}
+	user, err := s.dbStore.GetUserByID(c.Request().Context(), userID.(int64))
+	if err != nil {
+		return c.JSON(http.StatusNotFound, map[string]string{"error": "user not found"})
+	}
+	return c.JSON(http.StatusOK, map[string]any{
+		"user": map[string]any{"id": user.ID, "username": user.Username, "email": user.Email, "isAdmin": user.IsAdmin},
+	})
+}
+
+func (s *Server) handleCreateToken(c echo.Context) error {
+	userID := c.Get("auth_user_id")
+	if userID == nil {
+		return c.JSON(http.StatusUnauthorized, map[string]string{"error": "not authenticated"})
+	}
+	var body struct {
+		Name  string `json:"name"`
+		Scope string `json:"scope"`
+	}
+	if err := c.Bind(&body); err != nil {
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": "invalid request"})
+	}
+	if body.Name == "" {
+		body.Name = "PAT"
+	}
+	if body.Scope == "" {
+		body.Scope = "full"
+	}
+
+	tokenPair, err := auth.CreateAccessToken()
+	if err != nil {
+		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "token generation failed"})
+	}
+
+	expiresAt := tokenPair.ExpiresAt.UTC().Format(time.RFC3339Nano)
+	_, err = s.dbStore.CreateAccessToken(c.Request().Context(), store.AccessTokenRecord{
+		TokenHash:   tokenPair.Hash,
+		TokenPrefix: tokenPair.Prefix,
+		Name:        body.Name,
+		UserID:      userID.(int64),
+		Scope:       body.Scope,
+		ExpiresAt:   expiresAt,
+	})
+	if err != nil {
+		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "token save failed"})
+	}
+
+	return c.JSON(http.StatusCreated, map[string]any{
+		"token":     tokenPair.Token, // only shown once
+		"prefix":    tokenPair.Prefix,
+		"name":      body.Name,
+		"scope":     body.Scope,
+		"expiresAt": expiresAt,
+	})
+}
+
+func (s *Server) handleListTokens(c echo.Context) error {
+	userID := c.Get("auth_user_id")
+	if userID == nil {
+		return c.JSON(http.StatusUnauthorized, map[string]string{"error": "not authenticated"})
+	}
+	tokens, err := s.dbStore.ListAccessTokens(c.Request().Context(), userID.(int64))
+	if err != nil {
+		return c.JSON(http.StatusInternalServerError, map[string]string{"error": err.Error()})
+	}
+	// Don't return hashes
+	var out []map[string]any
+	for _, t := range tokens {
+		out = append(out, map[string]any{
+			"id":         t.ID,
+			"prefix":     t.TokenPrefix,
+			"name":       t.Name,
+			"scope":      t.Scope,
+			"lastUsedAt": t.LastUsedAt,
+			"expiresAt":  t.ExpiresAt,
+			"createdAt":  t.CreatedAt,
+		})
+	}
+	return c.JSON(http.StatusOK, map[string]any{"tokens": out})
+}
+
+func (s *Server) handleDeleteToken(c echo.Context) error {
+	userID := c.Get("auth_user_id")
+	if userID == nil {
+		return c.JSON(http.StatusUnauthorized, map[string]string{"error": "not authenticated"})
+	}
+	id, _ := strconv.ParseInt(c.Param("id"), 10, 64)
+	if err := s.dbStore.DeleteAccessToken(c.Request().Context(), id, userID.(int64)); err != nil {
+		return c.JSON(http.StatusInternalServerError, map[string]string{"error": err.Error()})
+	}
+	return c.JSON(http.StatusOK, map[string]string{"message": "deleted"})
+}
+
+func (s *Server) getCurrentUserID(c echo.Context) (int64, bool) {
+	if v := c.Get("auth_user_id"); v != nil {
+		if id, ok := v.(int64); ok {
+			return id, true
+		}
+	}
+	return 0, false
+}
+
+func (s *Server) isAdmin(c echo.Context) bool {
+	if v := c.Get("auth_user_id"); v != nil {
+		if user, err := s.dbStore.GetUserByID(c.Request().Context(), v.(int64)); err == nil {
+			return user.IsAdmin
+		}
+	}
+	return false
+}
+
+func (s *Server) checkRepoAccess(c echo.Context, owner, name, requiredRole string) (bool, error) {
+	userID, ok := s.getCurrentUserID(c)
+	if !ok {
+		return false, nil
+	}
+	if s.isAdmin(c) {
+		return true, nil
+	}
+	role, err := s.dbStore.GetRepoMemberRole(c.Request().Context(), owner, name, userID)
+	if err != nil {
+		return false, nil
+	}
+	return roleHasAccess(role, requiredRole), nil
+}
+
+func roleHasAccess(userRole, required string) bool {
+	rank := map[string]int{"read": 1, "write": 2, "admin": 3}
+	return rank[userRole] >= rank[required]
 }
 
 func (s *Server) handleListRepos(c echo.Context) error {

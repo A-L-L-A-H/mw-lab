@@ -22,10 +22,16 @@ import (
 
 func runGitHelper(t *testing.T, workDir string, args ...string) string {
 	t.Helper()
-	cmd := exec.Command("git", args...)
+	var gitArgs []string
+	if token := os.Getenv("MW_TEST_AUTH_TOKEN"); token != "" {
+		gitArgs = append(gitArgs, "-c", "http.extraheader=Authorization: Bearer "+token)
+	}
+	gitArgs = append(gitArgs, args...)
+	cmd := exec.Command("git", gitArgs...)
 	cmd.Dir = workDir
 	cmd.Env = append(os.Environ(),
 		"GIT_TERMINAL_PROMPT=0",
+		"GIT_ASKPASS=",
 		"GIT_AUTHOR_NAME=MW Tester",
 		"GIT_AUTHOR_EMAIL=tester@moonwitness.local",
 		"GIT_COMMITTER_NAME=MW Tester",
@@ -225,6 +231,7 @@ func TestSmartHTTPClonePushAndWebhookDelivery(t *testing.T) {
 
 	dispatcher := NewWebhookDispatcher(labStore, webhookServer.Client())
 	gitHandler := NewHandler(mgr, labStore, dispatcher)
+	gitHandler.SetAuth("test-token-123", nil)
 	echoApp := echo.New()
 	gitHandler.RegisterRoutes(echoApp)
 	gitServer := httptest.NewServer(echoApp)
@@ -237,6 +244,7 @@ func TestSmartHTTPClonePushAndWebhookDelivery(t *testing.T) {
 	if err := os.MkdirAll(workDir, 0o755); err != nil {
 		t.Fatalf("mkdir workDir: %v", err)
 	}
+	t.Setenv("MW_TEST_AUTH_TOKEN", "test-token-123")
 	runGitHelper(t, workDir, "init", "-b", "main")
 	if err := os.WriteFile(filepath.Join(workDir, "hello.txt"), []byte("sovereign push payload\n"), 0o644); err != nil {
 		t.Fatalf("write hello.txt: %v", err)

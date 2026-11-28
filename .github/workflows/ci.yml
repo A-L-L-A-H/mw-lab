@@ -17,7 +17,7 @@ concurrency:
 
 jobs:
   commitlint:
-    name: Commitlint
+    name: commitlint
     runs-on: ubuntu-latest
     if: github.event_name == 'pull_request'
     steps:
@@ -32,7 +32,7 @@ jobs:
           done
 
   verify:
-    name: Verify
+    name: verify
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4

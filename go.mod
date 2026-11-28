@@ -3,7 +3,7 @@ module github.com/A-L-L-A-H/mw-lab
 go 1.26.11
 
 require (
-	github.com/labstack/echo/v4 v4.16.3
+	github.com/labstack/echo/v4 v4.16.6
 	modernc.org/sqlite v1.34.3
 )
 
